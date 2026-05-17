@@ -3,11 +3,10 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it } from 'vitest'
 
 import NotFoundPage from '@/pages/NotFoundPage'
-import TicketDetailPage from '@/pages/TicketDetailPage'
 
 /**
  * 冒烟测试：仅测试无网络副作用的页面。
- * 列表页的渲染由更专注的组件测试覆盖，避免触发真实 fetch。
+ * 列表页与详情页因带 fetch 副作用，由更专注的组件测试覆盖。
  */
 describe('routing smoke', () => {
   it('renders 404 for unknown routes', () => {
@@ -21,14 +20,14 @@ describe('routing smoke', () => {
     expect(screen.getByText('404')).toBeInTheDocument()
   })
 
-  it('renders detail placeholder with id from URL', () => {
+  it('NotFoundPage offers a link back to home', () => {
     render(
-      <MemoryRouter initialEntries={['/tickets/42']}>
+      <MemoryRouter initialEntries={['/anything']}>
         <Routes>
-          <Route path="/tickets/:id" element={<TicketDetailPage />} />
+          <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </MemoryRouter>,
     )
-    expect(screen.getByText(/Ticket #42/)).toBeInTheDocument()
+    expect(screen.getByText('返回首页')).toBeInTheDocument()
   })
 })
