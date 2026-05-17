@@ -47,7 +47,8 @@ dist/
 venv/
 env/
 ENV/
-.python-version
+# .python-version 用于锁定项目 Python 版本，应入库
+!.python-version
 
 .pytest_cache/
 .coverage
