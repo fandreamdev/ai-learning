@@ -54,7 +54,7 @@
 | 🧪 测试 | ⏳ 待开始 |
 | 🚀 部署 | ⏳ 待开始 |
 
-预计总工期 **14 个工作日**，详见 [实现计划](specs/weak1/0002-implementation-plan.md)。
+预计总工期 **14 个工作日**，详见 [实现计划](specs/week1/0002-implementation-plan.md)。
 
 ---
 
@@ -84,7 +84,7 @@
 已关闭 ──► 待处理   (重新打开)
 ```
 
-详细的功能验收标准见 [需求与设计文档 §3](specs/weak1/0001-spec.md#3-功能需求)。
+详细的功能验收标准见 [需求与设计文档 §3](specs/week1/0001-spec.md#3-功能需求)。
 
 ---
 
@@ -169,7 +169,7 @@
 └──────────────────────────────────────────────────────────┘
 ```
 
-详见 [需求与设计文档 §8](specs/weak1/0001-spec.md#8-技术架构)。
+详见 [需求与设计文档 §8](specs/week1/0001-spec.md#8-技术架构)。
 
 ---
 
@@ -196,7 +196,7 @@ project-alpha/
 │   └── seeds/              # 种子数据
 ├── docs/                   # 项目文档 — 待创建
 ├── specs/                  # 规范文档 ✅
-│   └── weak1/
+│   └── week1/
 │       ├── instructions.md          # 原始需求
 │       ├── 0001-spec.md             # 需求与设计文档
 │       └── 0002-implementation-plan.md  # 实现计划
@@ -205,7 +205,7 @@ project-alpha/
 └── README.md               ✅
 ```
 
-完整目录设计见 [需求与设计文档 §9](specs/weak1/0001-spec.md#9-项目目录结构)。
+完整目录设计见 [需求与设计文档 §9](specs/week1/0001-spec.md#9-项目目录结构)。
 
 ---
 
@@ -329,7 +329,7 @@ npm run test:coverage                # 含覆盖率
 | 8 | 测试与质量保障 | Day 11~12 |
 | 9 | 部署上线 | Day 13~14 |
 
-详细任务分解、关键路径、风险登记见 [实现计划](specs/weak1/0002-implementation-plan.md)。
+详细任务分解、关键路径、风险登记见 [实现计划](specs/week1/0002-implementation-plan.md)。
 
 ---
 
@@ -337,9 +337,9 @@ npm run test:coverage                # 含覆盖率
 
 | 文档 | 说明 |
 |------|------|
-| [原始需求](specs/weak1/instructions.md) | 项目最初的需求描述 |
-| [需求与设计文档](specs/weak1/0001-spec.md) | 完整的功能需求、数据模型、API 设计、UI 原型、部署方案 |
-| [实现计划](specs/weak1/0002-implementation-plan.md) | 14 天分阶段任务、WBS、风险登记、DoD 验收清单 |
+| [原始需求](specs/week1/instructions.md) | 项目最初的需求描述 |
+| [需求与设计文档](specs/week1/0001-spec.md) | 完整的功能需求、数据模型、API 设计、UI 原型、部署方案 |
+| [实现计划](specs/week1/0002-implementation-plan.md) | 14 天分阶段任务、WBS、风险登记、DoD 验收清单 |
 | Swagger UI | 后端启动后访问 `/docs`（待实现） |
 
 ---
@@ -413,7 +413,7 @@ main      ← 生产分支（受保护）
 
 ### 接口变更
 
-⚠️ 接口契约变更必须 **先改 Swagger 文档**，再通知前端，并同步更新 [需求与设计文档](specs/weak1/0001-spec.md)。
+⚠️ 接口契约变更必须 **先改 Swagger 文档**，再通知前端，并同步更新 [需求与设计文档](specs/week1/0001-spec.md)。
 
 ---
 

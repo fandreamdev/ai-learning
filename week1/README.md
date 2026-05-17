@@ -1,11 +1,11 @@
-# ProjectAlpha (weak1)
+# ProjectAlpha (week1)
 
-> 轻量级 Ticket 管理工具 — 实现参见 [specs/weak1/0001-spec.md](../specs/weak1/0001-spec.md) 与 [specs/weak1/0002-implementation-plan.md](../specs/weak1/0002-implementation-plan.md)。
+> 轻量级 Ticket 管理工具 — 实现参见 [specs/week1/0001-spec.md](../specs/week1/0001-spec.md) 与 [specs/week1/0002-implementation-plan.md](../specs/week1/0002-implementation-plan.md)。
 
 ## 目录结构
 
 ```
-weak1/
+week1/
 ├── frontend/          # 前端 (React 19 + Vite 8 + TS)        待实现
 ├── backend/           # 后端 (Python 3.13 + FastAPI 0.136)    待实现
 ├── database/          # 数据库脚本

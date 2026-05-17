@@ -1,7 +1,7 @@
 -- =====================================================
 -- ProjectAlpha 数据库初始化脚本
 -- 用途: Docker MySQL 容器首次启动自动执行；本地开发可手动运行
--- 来源: specs/weak1/0001-spec.md §10.1
+-- 来源: specs/week1/0001-spec.md §10.1
 -- =====================================================
 
 CREATE DATABASE IF NOT EXISTS project_alpha
