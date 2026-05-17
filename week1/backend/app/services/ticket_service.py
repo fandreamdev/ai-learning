@@ -8,13 +8,20 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.constants import STATUS_TRANSITIONS
 from app.core.exceptions import InvalidStatusTransition, TicketNotFound
 from app.models.ticket import Ticket
-from app.schemas.ticket import TicketCreate, TicketStatus, TicketUpdate
+from app.schemas.ticket import (
+    SortBy,
+    SortOrder,
+    TicketCreate,
+    TicketListQuery,
+    TicketStatus,
+    TicketUpdate,
+)
 
 # ---------------------------------------------------------------------------
 # 内部辅助
@@ -117,7 +124,56 @@ def delete_ticket(db: Session, ticket_id: int) -> None:
 
 def count_tickets(db: Session) -> int:
     """工具函数：统计 ticket 数量（主要供测试与调试使用）。"""
-    from sqlalchemy import func as sa_func
-
-    result = db.scalar(select(sa_func.count()).select_from(Ticket))
+    result = db.scalar(select(func.count()).select_from(Ticket))
     return int(result or 0)
+
+
+# ---------------------------------------------------------------------------
+# 列表查询
+# ---------------------------------------------------------------------------
+
+
+def _build_list_filters(q: TicketListQuery) -> list[ColumnElement[bool]]:
+    """根据查询参数生成 WHERE 子句列表。"""
+    conds: list[ColumnElement[bool]] = []
+    if q.statuses:
+        conds.append(Ticket.status.in_([s.value for s in q.statuses]))
+    if q.priorities:
+        conds.append(Ticket.priority.in_([p.value for p in q.priorities]))
+    if q.assignee:
+        conds.append(Ticket.assignee == q.assignee)
+    if q.tag:
+        # MySQL: JSON_CONTAINS(tags, JSON_QUOTE('bug'))
+        conds.append(func.json_contains(Ticket.tags, func.json_quote(q.tag)) == 1)
+    if q.keyword:
+        like = f"%{q.keyword}%"
+        conds.append(or_(Ticket.title.like(like), Ticket.description.like(like)))
+    return conds
+
+
+def list_tickets(db: Session, q: TicketListQuery) -> tuple[list[Ticket], int]:
+    """筛选 + 搜索 + 排序 + 分页地查询 Ticket 列表。
+
+    返回 ``(items, total)``，便于上层组装分页结构。
+    """
+    conds = _build_list_filters(q)
+
+    stmt = select(Ticket)
+    count_stmt = select(func.count()).select_from(Ticket)
+    if conds:
+        stmt = stmt.where(*conds)
+        count_stmt = count_stmt.where(*conds)
+
+    # 主排序
+    sort_col = Ticket.created_at if q.sort_by == SortBy.created_at else Ticket.updated_at
+    sort_expr = sort_col.desc() if q.sort_order == SortOrder.desc else sort_col.asc()
+    # 次要排序：id desc 保证稳定
+    stmt = stmt.order_by(sort_expr, Ticket.id.desc())
+
+    # 分页
+    offset = (q.page - 1) * q.page_size
+    stmt = stmt.offset(offset).limit(q.page_size)
+
+    items = list(db.scalars(stmt).all())
+    total = int(db.scalar(count_stmt) or 0)
+    return items, total

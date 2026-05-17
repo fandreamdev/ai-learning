@@ -7,7 +7,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.v1 import tickets
+from app.api.v1 import aggregations, tickets
 
 router = APIRouter(prefix="/api/v1")
 router.include_router(tickets.router)
+router.include_router(aggregations.router)
