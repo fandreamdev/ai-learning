@@ -4,6 +4,8 @@
  * 注意：``request`` 拦截器已拆封 ``{code, message, data}``，
  * 这里的返回类型直接是业务数据，使用 ``request.get<unknown, T>(...)`` 让 TS 推断正确。
  */
+import type { AxiosRequestConfig } from 'axios'
+
 import { request } from '@/api/request'
 import type { PageData } from '@/types/api'
 import type {
@@ -29,8 +31,12 @@ function serializeQuery(q: TicketListQuery): Record<string, string | number> {
   return params
 }
 
-export function listTickets(query: TicketListQuery = {}): Promise<PageData<Ticket>> {
+export function listTickets(
+  query: TicketListQuery = {},
+  config?: AxiosRequestConfig,
+): Promise<PageData<Ticket>> {
   return request.get<unknown, PageData<Ticket>>('/tickets', {
+    ...config,
     params: serializeQuery(query),
   })
 }

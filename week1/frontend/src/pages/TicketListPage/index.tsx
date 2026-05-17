@@ -1,34 +1,81 @@
-import { Link } from 'react-router-dom'
+import Header from '@/components/Header/Header'
+import Layout from '@/components/Layout/Layout'
+import Sidebar from '@/components/Sidebar/Sidebar'
+import Pagination from '@/components/TicketTable/Pagination'
+import SortBar from '@/components/TicketTable/SortBar'
+import TicketTable from '@/components/TicketTable/TicketTable'
+import ErrorToast from '@/components/Toast/ErrorToast'
+import { useTicketListUrlState } from '@/hooks/useTicketListUrlState'
+import { useTickets } from '@/hooks/useTickets'
 
 /**
- * 阶段 5 将实现完整列表页（Header + Sidebar + TicketTable + 分页）。
- * 当前为占位组件，仅用于验证脚手架可启动。
+ * Ticket 列表页（spec §6.1）。
+ *
+ * - 所有筛选/搜索/排序/分页状态保存在 URL（``useTicketListUrlState``）
+ * - 数据通过 ``useTickets`` 加载，AbortController 防止竞态
+ * - 加载/空/错误三态分别由 TableSkeleton / EmptyState / ErrorToast 处理
  */
 export default function TicketListPage() {
-  return (
-    <main className="min-h-screen p-8">
-      <header className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">ProjectAlpha</h1>
-        <span className="text-sm text-gray-500">阶段 4 · 前端基础框架</span>
-      </header>
+  const {
+    query,
+    toggleStatus,
+    togglePriority,
+    setAssignee,
+    setTag,
+    setKeyword,
+    setSort,
+    setPage,
+    setPageSize,
+    clearAll,
+  } = useTicketListUrlState()
 
-      <section className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-        <p className="text-gray-700">
-          ✅ 前端骨架已就绪：Vite + React 19 + TypeScript + Tailwind v4 + React Router 7。
-        </p>
-        <p className="mt-2 text-sm text-gray-500">
-          列表与筛选功能将在阶段 5 实现。新建 / 详情 / 删除 等交互将在阶段 6 实现。
-        </p>
-        <p className="mt-4 text-sm">
-          路由测试：
-          <Link to="/tickets/1" className="ml-2 text-blue-600 underline">
-            /tickets/1（详情页占位）
-          </Link>
-          <Link to="/no-such-route" className="ml-4 text-blue-600 underline">
-            /no-such-route（404）
-          </Link>
-        </p>
-      </section>
-    </main>
+  const { data, loading, error, reload } = useTickets(query)
+
+  const items = data?.items ?? []
+  const total = data?.total ?? 0
+  const page = data?.page ?? query.page ?? 1
+  const pageSize = data?.page_size ?? query.page_size ?? 20
+
+  return (
+    <Layout
+      header={
+        <Header keyword={query.keyword} onKeywordChange={setKeyword} />
+      }
+      sidebar={
+        <Sidebar
+          query={query}
+          onToggleStatus={toggleStatus}
+          onTogglePriority={togglePriority}
+          onChangeAssignee={setAssignee}
+          onChangeTag={setTag}
+          onClearAll={clearAll}
+        />
+      }
+    >
+      <div className="mx-auto flex max-w-[1400px] flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-semibold text-gray-900">Ticket 列表</h1>
+          <SortBar
+            sortBy={query.sort_by ?? 'created_at'}
+            sortOrder={query.sort_order ?? 'desc'}
+            onChange={setSort}
+          />
+        </div>
+
+        {error && <ErrorToast message={error.message} onRetry={reload} />}
+
+        {!error && <TicketTable items={items} loading={loading} />}
+
+        {!loading && !error && total > 0 && (
+          <Pagination
+            page={page}
+            pageSize={pageSize}
+            total={total}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+          />
+        )}
+      </div>
+    </Layout>
   )
 }
