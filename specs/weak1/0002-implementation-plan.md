@@ -771,7 +771,7 @@ def db_session():
 
 ```dockerfile
 # 构建阶段
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
@@ -841,7 +841,7 @@ EXPOSE 80
 | R03 | 关键字搜索 LIKE 慢 | 低 | 中 | FULLTEXT 索引已建；必要时引入 ES（后期） |
 | R04 | 联调期间字段语义偏差（如 status 用中文 vs 英文） | 中 | 中 | spec §4.2 已固定枚举映射；联调检查清单第 2 项必查 |
 | R05 | Alembic 自动生成迁移漏字段 | 中 | 中 | 每次生成后人工 diff `alembic upgrade head --sql` |
-| R06 | Docker 镜像体积过大 | 低 | 低 | 后端用 `python:3.11-slim`；前端多阶段构建只保留 dist |
+| R06 | Docker 镜像体积过大 | 低 | 低 | 后端用 `python:3.13-slim`；前端多阶段构建只保留 dist |
 | R07 | 时区不一致（开发本地 vs 容器 UTC） | 高 | 中 | 后端统一存 UTC，返回 ISO；前端按浏览器时区展示 |
 | R08 | 14 天工期偏紧 | 中 | 高 | 阶段 5、6 可适当简化交互（不影响验收），优先保功能完整 |
 

@@ -3,8 +3,8 @@
 > 一个轻量级的 Ticket 管理工具 — 用于团队任务、问题、需求的统一跟踪与协作。
 
 [![Status](https://img.shields.io/badge/status-design--phase-yellow)]()
-[![Backend](https://img.shields.io/badge/backend-Python%203.11%2B%20%7C%20FastAPI-009688)]()
-[![Frontend](https://img.shields.io/badge/frontend-React%2019%20%7C%20Vite%20%7C%20TS-61DAFB)]()
+[![Backend](https://img.shields.io/badge/backend-Python%203.13%20%7C%20FastAPI%200.136-009688)]()
+[![Frontend](https://img.shields.io/badge/frontend-React%2019.2%20%7C%20Vite%208%20%7C%20TS%206-61DAFB)]()
 [![Database](https://img.shields.io/badge/database-MySQL%208.0-4479A1)]()
 [![License](https://img.shields.io/badge/license-TBD-lightgrey)]()
 
@@ -92,47 +92,47 @@
 
 ### 前端
 
-| 类别 | 技术 | 用途 |
-|------|------|------|
-| 框架 | **React 19** | 组件化开发 |
-| 构建 | **Vite** | 快速热更新 |
-| 语言 | **TypeScript** (strict) | 类型安全 |
-| UI | **TailwindCSS + Shadcn UI** | 样式与组件 |
-| 路由 | **React Router v6** | SPA 路由 |
-| HTTP | **Axios** | API 请求 |
-| Mock | **MSW** | 联调前的接口模拟 |
+| 类别 | 技术 | 版本 | 用途 |
+|------|------|------|------|
+| 框架 | **React** | 19.2.6 | 组件化开发 |
+| 构建 | **Vite** | 8.0.13 | 快速热更新 |
+| 语言 | **TypeScript** (strict) | 6.0.3 | 类型安全 |
+| UI | **TailwindCSS** + Shadcn UI | 4.3.0 | 样式与组件 |
+| 路由 | **React Router** | 7.15.1 | SPA 路由 |
+| HTTP | **Axios** | 1.16.1 | API 请求 |
+| Mock | **MSW** | 2.14.6 | 联调前的接口模拟 |
 
 ### 后端
 
-| 类别 | 技术 | 用途 |
-|------|------|------|
-| 语言 | **Python 3.11+** | 全量类型注解 |
-| 框架 | **FastAPI** | 异步高性能 Web 框架 |
-| ASGI | **Uvicorn** | ASGI 服务器 |
-| ORM | **SQLAlchemy 2.x** | 数据库 ORM |
-| 迁移 | **Alembic** | 数据库版本管理 |
-| 校验 | **Pydantic v2** | 类型驱动的数据校验 |
-| 驱动 | **PyMySQL** | MySQL 连接驱动 |
-| 依赖 | **Poetry** | 依赖与虚拟环境管理 |
+| 类别 | 技术 | 版本 | 用途 |
+|------|------|------|------|
+| 语言 | **Python** | 3.13 | 全量类型注解 |
+| 框架 | **FastAPI** | 0.136.1 | 异步高性能 Web 框架 |
+| ASGI | **Uvicorn** | 0.47.0 | ASGI 服务器 |
+| ORM | **SQLAlchemy** | 2.0.49 | 数据库 ORM |
+| 迁移 | **Alembic** | 1.18.4 | 数据库版本管理 |
+| 校验 | **Pydantic** | 2.13.4 | 类型驱动的数据校验 |
+| 驱动 | **PyMySQL** | 1.1.3 | MySQL 连接驱动 |
+| 依赖 | **Poetry** | 2.4.1 | 依赖与虚拟环境管理 |
 
 ### 数据库 & 基础设施
 
-| 类别 | 技术 |
-|------|------|
-| 数据库 | **MySQL 8.0** |
-| 容器 | **Docker + Docker Compose** |
-| 反向代理 | **Nginx** |
-| API 文档 | **Swagger UI** (FastAPI 自动生成) |
+| 类别 | 技术 | 版本 |
+|------|------|------|
+| 数据库 | **MySQL** | 8.0 (LTS) |
+| 容器 | **Docker + Docker Compose** | 最新版 |
+| 反向代理 | **Nginx** | 1.27+ |
+| API 文档 | **Swagger UI** | FastAPI 内置 |
 
 ### 质量保障
 
-| 类别 | 工具 |
-|------|------|
-| 后端测试 | pytest + pytest-asyncio + httpx |
-| 前端测试 | Vitest + React Testing Library |
-| 后端 Lint | Ruff + Black + isort + mypy |
-| 前端 Lint | ESLint + Prettier + tsc |
-| Git 规范 | Conventional Commits + pre-commit |
+| 类别 | 工具 | 版本 |
+|------|------|------|
+| 后端测试 | pytest + pytest-asyncio + httpx | 9.0 / 1.3 / 0.28 |
+| 前端测试 | Vitest + React Testing Library | 4.1.6 |
+| 后端 Lint | Ruff + Black + isort + mypy | 0.15 / 26.5 / - / 2.1 |
+| 前端 Lint | ESLint + Prettier + tsc | 10.4 / 3.8 / 6.0 |
+| Git 规范 | Conventional Commits + pre-commit | — |
 
 ---
 
@@ -217,11 +217,12 @@ project-alpha/
 
 | 软件 | 版本 |
 |------|------|
-| Python | 3.11+ |
-| Node.js | 20+ |
+| Python | 3.13+ |
+| Node.js | 22 LTS |
 | MySQL | 8.0+ |
 | Docker | 24+ |
 | Docker Compose | 2.x+ |
+| Poetry | 2.4+ |
 
 ### 方式一：Docker 一键启动（推荐）
 
