@@ -1,0 +1,42 @@
+# Files & directories to exclude from the build context.
+# Order matters: more specific patterns can be exceptions to broader ones.
+
+# Local Python virtualenv & caches
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Test, dev tooling, scripts (not needed at runtime)
+tests/
+scripts/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# IDE / editor
+.vscode/
+.idea/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation / build artifacts
+README.md
+*.log
+
+# Docker context shouldn't include itself
+Dockerfile
+.dockerignore

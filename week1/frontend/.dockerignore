@@ -1,0 +1,48 @@
+# Files & directories excluded from the docker build context.
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+.npm/
+.yarn/cache/
+
+# Build artifacts (built fresh in image)
+dist/
+build/
+.vite/
+*.tsbuildinfo
+
+# Test outputs
+coverage/
+playwright-report/
+test-results/
+.eslintcache
+
+# E2E (not needed at runtime). Keep tsconfig.e2e.json: it's referenced by
+# root tsconfig.json via project-references; rolldown/vite reads the graph.
+# The e2e/ directory itself is still pruned, so the project just resolves to nothing.
+e2e/
+playwright.config.ts
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# IDE / editor
+.vscode/
+.idea/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation
+README.md
+*.log
+
+# Docker context shouldn't include itself
+Dockerfile
+.dockerignore

@@ -1,0 +1,81 @@
+# =====================================================
+# ProjectAlpha — docker-compose deployment
+#
+# Three services:
+#   - mysql     MySQL 8.0 (data persisted in named volume)
+#   - backend   FastAPI app (auto-migrates on boot)
+#   - frontend  Nginx serving the React SPA + reverse-proxying /api
+#
+# Usage:
+#   docker compose --env-file .env.docker up -d --build
+#   curl http://localhost/healthz
+#   docker compose down            # keep data
+#   docker compose down -v         # remove data volume too
+# =====================================================
+
+services:
+  mysql:
+    image: docker.m.daocloud.io/library/mysql:8.0
+    container_name: pa-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME:-project_alpha}
+    ports:
+      - "${DB_PORT:-3307}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # init.sql ensures both project_alpha and project_alpha_test exist
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    command:
+      - mysqld
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${DB_PASSWORD}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pa-backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+      APP_HOST: 0.0.0.0
+      APP_PORT: "8000"
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_USER: root
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME:-project_alpha}
+      DB_NAME_TEST: ${DB_NAME_TEST:-project_alpha_test}
+      # CORS not strictly needed since frontend Nginx reverse-proxies /api,
+      # but allow any origin to keep dev parity.
+      CORS_ALLOW_ORIGINS: "*"
+      LOG_LEVEL: INFO
+    expose:
+      - "8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: pa-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${WEB_PORT:-80}:80"
+
+volumes:
+  mysql-data:
+    driver: local
