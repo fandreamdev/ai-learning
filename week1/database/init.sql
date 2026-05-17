@@ -1,7 +1,18 @@
 -- =====================================================
 -- ProjectAlpha 数据库初始化脚本
--- 用途: Docker MySQL 容器首次启动自动执行；本地开发可手动运行
--- 来源: specs/week1/0001-spec.md §10.1
+--
+-- 用途: 仅负责创建两个数据库（业务库 + 测试库）。
+--       表结构由 Alembic 管理（参见 backend/alembic/versions/）。
+--
+-- 使用:
+--   - Docker 首次启动时自动执行（挂载到 /docker-entrypoint-initdb.d）
+--   - 本地新环境手动运行：
+--       mysql -h 127.0.0.1 -P 3306 -uroot -p < database/init.sql
+--
+-- 创建数据库后，应用 Alembic 迁移以建表：
+--   cd backend && uv run alembic upgrade head
+--
+-- 来源约定: specs/week1/0001-spec.md §10
 -- =====================================================
 
 CREATE DATABASE IF NOT EXISTS project_alpha
@@ -11,31 +22,3 @@ CREATE DATABASE IF NOT EXISTS project_alpha
 CREATE DATABASE IF NOT EXISTS project_alpha_test
   DEFAULT CHARACTER SET utf8mb4
   DEFAULT COLLATE utf8mb4_unicode_ci;
-
-USE project_alpha;
-
--- ----------------------------------------------------
--- Ticket 工单表
--- ----------------------------------------------------
-CREATE TABLE IF NOT EXISTS tickets (
-  id          INT UNSIGNED    NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  title       VARCHAR(200)    NOT NULL                COMMENT 'Ticket 标题',
-  description TEXT            NULL                    COMMENT '详细描述',
-  status      ENUM('open','in_progress','done','closed')
-                              NOT NULL DEFAULT 'open' COMMENT '状态',
-  priority    ENUM('low','medium','high','urgent')
-                              NOT NULL DEFAULT 'medium' COMMENT '优先级',
-  assignee    VARCHAR(100)    NULL                    COMMENT '负责人',
-  tags        JSON            NULL                    COMMENT '标签列表',
-  created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  updated_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP
-                              ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-
-  INDEX idx_status     (status),
-  INDEX idx_priority   (priority),
-  INDEX idx_assignee   (assignee),
-  INDEX idx_created_at (created_at),
-  INDEX idx_updated_at (updated_at),
-  FULLTEXT INDEX ft_title_desc (title, description)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-  COMMENT='Ticket 工单表';
