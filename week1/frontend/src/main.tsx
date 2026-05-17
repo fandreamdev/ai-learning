@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import App from '@/App'
+import ToastProvider from '@/components/Toast/ToastProvider'
 import '@/index.css'
 
 async function bootstrap(): Promise<void> {
@@ -16,7 +17,9 @@ async function bootstrap(): Promise<void> {
   }
   createRoot(rootEl).render(
     <StrictMode>
-      <App />
+      <ToastProvider>
+        <App />
+      </ToastProvider>
     </StrictMode>,
   )
 }
