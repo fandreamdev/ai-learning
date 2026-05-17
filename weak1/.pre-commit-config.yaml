@@ -1,0 +1,44 @@
+# pre-commit 配置 — 在 git commit 时自动执行格式化与静态检查
+# 启用方式：
+#   1. pip install pre-commit
+#   2. pre-commit install
+# 参考: https://pre-commit.com
+
+repos:
+  # ---------- 通用文件检查 ----------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+        args: ['--maxkb=1024']
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+
+  # ---------- Python (后端) ----------
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.13
+    hooks:
+      - id: ruff
+        args: ['--fix']
+        files: ^backend/
+      - id: ruff-format
+        files: ^backend/
+
+  - repo: https://github.com/psf/black
+    rev: 26.5.0
+    hooks:
+      - id: black
+        files: ^backend/
+
+  # ---------- 前端 (Node) ----------
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v3.1.0
+    hooks:
+      - id: prettier
+        files: ^frontend/.*\.(ts|tsx|js|jsx|css|scss|md|json|yml|yaml)$
+        exclude: ^frontend/(node_modules|dist|build)/

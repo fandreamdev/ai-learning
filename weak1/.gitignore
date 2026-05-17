@@ -1,0 +1,111 @@
+# ===========================================
+#  weak1 子项目 .gitignore
+#  覆盖 Python(FastAPI) / Node(React+Vite) / 数据库 / Docker / IDE / OS
+# ===========================================
+
+# ---------- 通用：OS ----------
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ---------- 通用：IDE ----------
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+.history/
+
+# ---------- 通用：日志 / 临时 ----------
+*.log
+logs/
+*.pid
+tmp/
+temp/
+
+# ---------- 通用：环境变量 ----------
+.env
+.env.*
+!.env.example
+
+# ===========================================
+#  Python / FastAPI
+# ===========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+build/
+dist/
+*.egg
+*.egg-info/
+.eggs/
+
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+coverage.xml
+
+.mypy_cache/
+.ruff_cache/
+.pytype/
+
+.ipynb_checkpoints/
+
+# ===========================================
+#  Node / React / Vite
+# ===========================================
+node_modules/
+.pnp/
+.pnp.*
+.yarn/cache
+.yarn/install-state.gz
+
+dist/
+dist-ssr/
+build/
+.next/
+.nuxt/
+out/
+.vite/
+
+coverage/
+.nyc_output/
+*.tsbuildinfo
+
+.eslintcache
+.stylelintcache
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+public/mockServiceWorker.js
+
+# ===========================================
+#  数据库
+# ===========================================
+*.sqlite
+*.sqlite3
+*.db
+*.sql.gz
+mysql-data/
+data/
+dump.sql
+dump-*.sql
+
+# ===========================================
+#  Docker
+# ===========================================
+docker-compose.override.yml
