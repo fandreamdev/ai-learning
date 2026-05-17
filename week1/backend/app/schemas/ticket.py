@@ -142,3 +142,36 @@ class TicketRead(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# 列表查询
+# ---------------------------------------------------------------------------
+
+
+class SortBy(StrEnum):
+    """列表排序字段。"""
+
+    created_at = "created_at"
+    updated_at = "updated_at"
+
+
+class SortOrder(StrEnum):
+    """列表排序方向。"""
+
+    asc = "asc"
+    desc = "desc"
+
+
+class TicketListQuery(BaseModel):
+    """``GET /tickets`` 解析后的查询参数。"""
+
+    statuses: list[TicketStatus] = Field(default_factory=list)
+    priorities: list[TicketPriority] = Field(default_factory=list)
+    assignee: str | None = None
+    tag: str | None = None
+    keyword: str | None = None
+    sort_by: SortBy = SortBy.created_at
+    sort_order: SortOrder = SortOrder.desc
+    page: int = Field(default=1, ge=1)
+    page_size: int = Field(default=20, ge=1, le=100)
