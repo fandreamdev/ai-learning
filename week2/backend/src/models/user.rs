@@ -92,6 +92,25 @@ impl Default for UserRole {
     }
 }
 
+// sqlx 支持
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for UserRole {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let s: &'r str = <&str as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
+        UserRole::from_str(s)
+            .ok_or_else(|| format!("Invalid role: {}", s).into())
+    }
+}
+
+impl sqlx::Type<sqlx::Postgres> for UserRole {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        sqlx::postgres::PgTypeInfo::with_name("VARCHAR")
+    }
+
+    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+        ty.name() == "VARCHAR" || ty.name() == "TEXT"
+    }
+}
+
 /// 用户实体
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct User {

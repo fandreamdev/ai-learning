@@ -5,10 +5,9 @@
 use crate::config::AppConfig;
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    ChangePasswordRequest, CreateUserRequest, LoginRequest, LoginResponse, TokenClaims, UpdateUserRequest,
-    User, UserPublic, UserRole, UserSession,
+    ChangePasswordRequest, CreateUserRequest, LoginRequest, LoginResponse, User, UserPublic, UserRole, UserSession,
 };
-use crate::repositories::UserRepository;
+use crate::repositories::UserRepo;
 use crate::utils::{JwtUtils, PasswordUtils};
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -16,7 +15,7 @@ use std::sync::Arc;
 /// 认证服务
 #[derive(Clone)]
 pub struct AuthService {
-    user_repo: UserRepository,
+    user_repo: UserRepo,
     jwt_utils: JwtUtils,
     password_utils: PasswordUtils,
 }
@@ -24,7 +23,7 @@ pub struct AuthService {
 impl AuthService {
     pub fn new(config: Arc<AppConfig>, pool: PgPool) -> Self {
         Self {
-            user_repo: UserRepository::new(pool),
+            user_repo: UserRepo::new(pool),
             jwt_utils: JwtUtils::new(&config.jwt),
             password_utils: PasswordUtils::new(&config.security),
         }

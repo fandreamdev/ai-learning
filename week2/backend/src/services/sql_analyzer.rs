@@ -7,12 +7,9 @@ use crate::error::{AppError, AppResult};
 use crate::models::{DangerousFunctionCheck, SqlAnalysisResult, SqlType};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use sqlparser::ast::{
-    AlterOperation, AlterTableOperation, Statement, Visitor,
-};
-use sqlparser::dialect::{GenericDialect, MySqlDialect, PostgreSqlDialect};
+use sqlparser::ast::Statement;
+use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
-use std::collections::HashSet;
 use std::sync::Arc;
 
 /// SQL 安全分析器
@@ -183,38 +180,40 @@ impl SqlAnalyzer {
 
     /// 提取引用的表和列
     fn extract_references(&self, statement: &Statement) -> (Vec<String>, Vec<String>) {
+        use sqlparser::ast::{SetExpr, Statement};
+
         let mut tables = Vec::new();
         let mut columns = Vec::new();
 
-        struct TableColumnVisitor {
-            tables: Vec<String>,
-            columns: Vec<String>,
+        // 简单实现：从 SQL 字符串中提取表名和列名
+        let sql_str = statement.to_string();
+
+        // 使用正则提取 FROM 和 JOIN 后的表名
+        let table_pattern = regex::Regex::new(r"(?:FROM|JOIN)\s+(\w+)").unwrap();
+        for cap in table_pattern.captures_iter(&sql_str) {
+            if let Some(name) = cap.get(1) {
+                tables.push(name.as_str().to_string());
+            }
         }
 
-        impl Visitor for TableColumnVisitor {
-            type Error = std::convert::Infallible;
-
-            fn visit_table(&mut self, table: &sqlparser::ast::Table) -> Result<(), Self::Error> {
-                if let Some(table_name) = &table.name {
-                    self.tables.push(table_name.to_string());
+        // 使用正则提取 SELECT 和 WHERE 中的列名
+        let column_pattern = regex::Regex::new(r"(?:SELECT|WHERE|AND|OR|,)\s+(\w+)(?:\s*[,=><]|$)").unwrap();
+        for cap in column_pattern.captures_iter(&sql_str) {
+            if let Some(name) = cap.get(1) {
+                let col_name = name.as_str().to_string();
+                if !col_name.eq_ignore_ascii_case("SELECT")
+                    && !col_name.eq_ignore_ascii_case("FROM")
+                    && !col_name.eq_ignore_ascii_case("WHERE")
+                    && !col_name.eq_ignore_ascii_case("AND")
+                    && !col_name.eq_ignore_ascii_case("OR")
+                    && !tables.contains(&col_name)
+                {
+                    columns.push(col_name);
                 }
-                Ok(())
-            }
-
-            fn visit_column(&mut self, column: &sqlparser::ast::Column) -> Result<(), Self::Error> {
-                self.columns.push(column.to_string());
-                Ok(())
             }
         }
 
-        let mut visitor = TableColumnVisitor {
-            tables: vec![],
-            columns: vec![],
-        };
-
-        visitor.visit_statement(statement).ok();
-
-        (visitor.tables, visitor.columns)
+        (tables, columns)
     }
 
     /// 快速检查（只检查类型，不提取详细信息）

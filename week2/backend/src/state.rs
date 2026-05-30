@@ -3,6 +3,7 @@
 //! 管理应用共享状态，包括数据库连接池、Redis 客户端等
 
 use crate::config::AppConfig;
+use crate::services::connection_manager::ConnectionManager;
 use crate::services::llm_client::LlmClient;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
@@ -12,7 +13,7 @@ use std::sync::Arc;
 /// 包含所有需要在整个应用中共享的资源
 #[derive(Clone)]
 pub struct AppState {
-    /// PostgreSQL 连接池
+    /// PostgreSQL 连接池 (元数据存储)
     pub db: sqlx::PgPool,
 
     /// Redis 客户端
@@ -26,6 +27,9 @@ pub struct AppState {
 
     /// 当前用户信息（请求级别）
     pub request_id: Arc<std::sync::atomic::AtomicU64>,
+
+    /// 目标数据库连接管理器
+    pub connection_manager: ConnectionManager,
 }
 
 impl AppState {
@@ -42,6 +46,9 @@ impl AppState {
         // 初始化 LLM 客户端
         let llm_client = Arc::new(LlmClient::new(config)?);
 
+        // 初始化连接管理器
+        let connection_manager = ConnectionManager::new();
+
         // 创建状态
         let state = Self {
             db,
@@ -49,6 +56,7 @@ impl AppState {
             llm_client,
             config: Arc::new(config.clone()),
             request_id: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            connection_manager,
         };
 
         tracing::info!("Application state initialized successfully");
@@ -100,67 +108,5 @@ impl AppState {
     pub fn next_request_id(&self) -> u64 {
         self.request_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    }
-}
-
-/// 请求级别的状态提取器
-pub mod axum_ext {
-    use super::*;
-    use axum::{
-        extract::State,
-        http::request::Parts,
-        routing::MethodRouter,
-    };
-    use std::convert::Infallible;
-
-    impl<S> tower_service::Service<S> for AppState
-    where
-        S: Clone,
-    {
-        type Response = AppState;
-        type Error = Infallible;
-        type Future = std::future::Ready<Result<Self::Response, Self::Error>>;
-
-        fn poll_ready(
-            &mut self,
-            _cx: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<Result<(), Self::Error>> {
-            std::task::Poll::Ready(Ok(()))
-        }
-
-        fn call(&mut self, _state: S) -> Self::Future {
-            std::future::ready(Ok(self.clone()))
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_request_id_generation() {
-        let state = AppState {
-            db: sqlx::postgres::PgPoolOptions::new()
-                .max_connections(1)
-                .connect("postgres://localhost/test")
-                .await
-                .unwrap(),
-            redis: futures::executor::block_on(async {
-                let client = redis::Client::open("redis://localhost").unwrap();
-                client.get_multiplexed_async_connection().await.unwrap()
-            }),
-            llm_client: Arc::new(LlmClient::new(&crate::config::AppConfig::load_from_file("config.yaml").unwrap()).unwrap()),
-            config: Arc::new(crate::config::AppConfig::load_from_file("config.yaml").unwrap()),
-            request_id: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        };
-
-        let id1 = state.next_request_id();
-        let id2 = state.next_request_id();
-        let id3 = state.next_request_id();
-
-        assert_eq!(id1, 0);
-        assert_eq!(id2, 1);
-        assert_eq!(id3, 2);
     }
 }

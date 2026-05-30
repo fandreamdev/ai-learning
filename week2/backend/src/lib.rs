@@ -33,6 +33,3 @@ pub mod repositories;
 pub mod services;
 pub mod state;
 pub mod utils;
-
-/// 程序入口点
-pub use crate::api::start_server;

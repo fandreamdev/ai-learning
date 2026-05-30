@@ -210,11 +210,8 @@ impl SqlExecutor {
 
 /// 将语句转换为字符串
 fn statement_to_string(statement: &Statement, dialect: &GenericDialect) -> String {
-    use std::fmt::Write;
-
-    let mut sql = String::new();
-    statement.to_string_with dialect(&mut sql).ok();
-    sql
+    let _ = dialect;
+    statement.to_string()
 }
 
 use uuid::Uuid;

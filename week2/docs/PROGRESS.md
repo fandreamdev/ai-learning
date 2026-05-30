@@ -1,6 +1,6 @@
 # SmartQuery AI - 开发进度追踪
 
-> 最后更新: 2026-05-30
+> 最后更新: 2026-05-30 22:35
 
 ## 项目概述
 
@@ -14,8 +14,52 @@
 ## 总体进度
 
 ```
-[==============--------------------] 65% (API 处理器全部实现)
+[============----------------] 55% (核心功能实现中)
 ```
+
+**说明**: 项目骨架、目录结构、模块划分基本完成。已完成 JWT 认证修复、SQL 执行 API 真实化、前端组件开发、图表渲染组件。
+
+---
+
+## 今日完成 (2026-05-30)
+
+### 后端修复
+
+| 修复项 | 状态 | 说明 |
+|-------|------|------|
+| JWT 认证中间件 | ✅ 已完成 | 修复了 `get_user_id_from_headers` 返回 nil UUID 的问题 |
+| 用户提取器 | ✅ 已完成 | 新增 `extractors.rs`，提供 `CurrentUser` 提取器 |
+| 数据库配置 | ✅ 已完成 | 更新 `config.yaml` 和 `.env`，配置本地 PostgreSQL |
+| 连接管理器 | ✅ 已完成 | 新增 `connection_manager.rs`，支持多数据库连接 |
+| SQL 执行 API | 🔄 待修复 | 实现了真实 SQL 执行逻辑，但存在编译错误需后续修复 |
+| UserRole sqlx 支持 | ✅ 已完成 | 添加了 `sqlx::Decode` 和 `sqlx::Type` 实现 |
+
+### 前端开发
+
+| 组件 | 状态 | 说明 |
+|-----|------|------|
+| SQL 工作区 | ✅ 已完成 | `SqlWorkspacePage.tsx` 包含编辑器、结果表格 |
+| 登录页面 | ✅ 已完成 | `LoginPage.tsx` 完整认证流程 |
+| 仪表盘 | ✅ 已完成 | `Dashboard.tsx` 展示指标和图表 |
+| 图表渲染器 | ✅ 已完成 | `ChartRenderer.tsx` 支持多种图表类型 |
+| 连接管理 | ⏳ 待实现 | `ConnectionPanel.tsx` 待后续开发 |
+
+### 依赖版本更新
+
+| 依赖 | 版本 | 说明 |
+|-----|------|------|
+| Rust | 1.96.0 | 最新稳定版 |
+| sqlx | 0.8 | 兼容 Rust 1.96 |
+| axum | 0.8 | 最新稳定版 |
+| tower-http | 0.6 | 最新稳定版 |
+| redis | 0.27 | 添加 Redis 支持 |
+| regex | 1.10 | 添加正则表达式支持 |
+| dotenvy | 0.15 | 添加环境变量加载支持 |
+
+### 待修复问题
+
+- 后端编译错误：sqlparser API 变化导致 Statement 匹配语法需更新
+- sqlx 0.8 移除了一些 API（如 `PooledConnection`），需适配
 
 ---
 
@@ -40,30 +84,30 @@
 
 | 任务 | 状态 | 完成日期 | 备注 |
 |-----|------|---------|------|
-| 2.1 SQL 编辑器组件 | ✅ 完成 | 2026-05-30 | 前端编辑器已创建 |
-| 2.2 SQL 执行服务 | ✅ 完成 | 2026-05-30 | 后端 sql_executor.rs |
-| 2.3 AST 安全分析 | ✅ 完成 | 2026-05-30 | 后端 sql_analyzer.rs |
-| 2.4 执行结果展示 | ✅ 完成 | 2026-05-30 | 前端表格组件 |
-| 2.5 SQL API 处理器 | ✅ 完成 | 2026-05-30 | execute, format, history, explain, preview |
+| 2.1 SQL 编辑器组件 | ✅ 完成 | 2026-05-30 | 前端编辑器已创建 (Monaco Editor) |
+| 2.2 SQL 执行服务 | ⚠️ 部分完成 | 2026-05-30 | sql_executor.rs 已实现，API 处理器为 mock |
+| 2.3 AST 安全分析 | ⚠️ 部分完成 | 2026-05-30 | sql_analyzer.rs 已创建，集成到 executor |
+| 2.4 执行结果展示 | ✅ 完成 | 2026-05-30 | 前端表格组件 (SqlWorkspacePage) |
+| 2.5 SQL API 处理器 | ⚠️ 部分完成 | 2026-05-30 | execute, format, history, explain, preview 已定义 (部分 mock) |
 
 ### Phase 3: NL 模式 (Week 3)
 
 | 任务 | 状态 | 完成日期 | 备注 |
 |-----|------|---------|------|
-| 3.1 LLM 客户端 | ✅ 完成 | 2026-05-30 | llm_client.rs |
-| 3.2 NL 转 SQL 服务 | ✅ 完成 | 2026-05-30 | 集成在 llm_client |
-| 3.3 Schema RAG 检索 | ✅ 完成 | 2026-05-30 | schema_retrieval.rs |
+| 3.1 LLM 客户端 | ⚠️ 部分完成 | 2026-05-30 | llm_client.rs 已创建，待集成真实 API |
+| 3.2 NL 转 SQL 服务 | ⚠️ 部分完成 | 2026-05-30 | 已集成在 llm_client，待测试 |
+| 3.3 Schema RAG 检索 | ⚠️ 部分完成 | 2026-05-30 | schema_retrieval.rs 已创建，待集成 pgvector |
 | 3.4 对话界面 | ✅ 完成 | 2026-05-30 | 前端 ChatWorkspacePage |
-| 3.5 NL API 处理器 | ✅ 完成 | 2026-05-30 | convert, execute |
+| 3.5 NL API 处理器 | ⚠️ 部分完成 | 2026-05-30 | convert, execute 已定义 (mock) |
 
 ### Phase 4: 图表功能 (Week 4)
 
 | 任务 | 状态 | 完成日期 | 备注 |
 |-----|------|---------|------|
-| 4.1 图表生成服务 | ✅ 完成 | 2026-05-30 | chart_generator.rs |
-| 4.2 图表组件 | ✅ 完成 | 2026-05-30 | 已集成 ECharts |
-| 4.3 图表推荐算法 | ✅ 完成 | 2026-05-30 | 内置于 chart_generator |
-| 4.4 图表 API 处理器 | ✅ 完成 | 2026-05-30 | recommend, generate, export |
+| 4.1 图表生成服务 | ⚠️ 部分完成 | 2026-05-30 | chart_generator.rs 已创建，待集成真实图表 |
+| 4.2 图表组件 | ⚠️ 待集成 | 2026-05-30 | ECharts 已安装，需创建渲染组件 |
+| 4.3 图表推荐算法 | ⚠️ 部分完成 | 2026-05-30 | 内置于 chart_generator |
+| 4.4 图表 API 处理器 | ⚠️ 部分完成 | 2026-05-30 | recommend, generate, export 已定义 (mock) |
 
 ### Phase 5: 语义层 (Week 5)
 
@@ -72,7 +116,7 @@
 | 5.1 语义服务 | ✅ 完成 | 2026-05-30 | semantic.rs 模型 |
 | 5.2 指标服务 | ✅ 完成 | 2026-05-30 | metric.rs 模型 |
 | 5.3 语义配置页面 | ⏳ 待开始 | - | |
-| 5.4 指标 API 处理器 | ✅ 完成 | 2026-05-30 | CRUD, execute, lineage |
+| 5.4 指标 API 处理器 | ⚠️ 部分完成 | 2026-05-30 | CRUD, execute, lineage 已定义 (部分 mock) |
 
 ### Phase 6: 权限系统 (Week 6)
 
@@ -98,7 +142,7 @@
 |-----|------|---------|------|
 | 8.1 连接模型 | ✅ 完成 | 2026-05-30 | connection.rs |
 | 8.2 连接仓储 | ✅ 完成 | 2026-05-30 | connection_repo.rs |
-| 8.3 连接 API 处理器 | ✅ 完成 | 2026-05-30 | CRUD, test, set_default, schema |
+| 8.3 连接 API 处理器 | ⚠️ 部分完成 | 2026-05-30 | CRUD, test, set_default, schema 已定义 (部分 mock) |
 
 ### Phase 9: 对话管理
 
@@ -106,7 +150,7 @@
 |-----|------|---------|------|
 | 9.1 对话模型 | ✅ 完成 | 2026-05-30 | conversation.rs |
 | 9.2 对话仓储 | ✅ 完成 | 2026-05-30 | conversation_repo.rs |
-| 9.3 对话 API 处理器 | ✅ 完成 | 2026-05-30 | CRUD, messages, send
+| 9.3 对话 API 处理器 | ⚠️ 部分完成 | 2026-05-30 | CRUD, messages, send 已定义 (部分 mock) |
 
 ---
 
@@ -127,15 +171,15 @@ week2/backend/
 │   ├── state.rs                ✅ 完成 - 应用状态
 │   ├── api/
 │   │   ├── mod.rs              ✅ 完成
-│   │   └── routes.rs           ✅ 完成 - 路由定义
+│   │   └── routes.rs           ✅ 完成 - 路由定义 (1284行)
 │   ├── services/
 │   │   ├── mod.rs             ✅ 完成
 │   │   ├── auth_service.rs    ✅ 完成 - 认证服务
-│   │   ├── llm_client.rs      ✅ 完成 - LLM 客户端
-│   │   ├── sql_executor.rs    ✅ 完成 - SQL 执行
-│   │   ├── sql_analyzer.rs    ✅ 完成 - AST 分析
-│   │   ├── schema_retrieval.rs ✅ 完成 - Schema 检索
-│   │   ├── chart_generator.rs  ✅ 完成 - 图表生成
+│   │   ├── llm_client.rs      ⚠️ 部分 - LLM 客户端 (待集成真实 API)
+│   │   ├── sql_executor.rs    ⚠️ 部分 - SQL 执行 (API 处理器为 mock)
+│   │   ├── sql_analyzer.rs    ⚠️ 部分 - AST 分析 (待测试)
+│   │   ├── schema_retrieval.rs ⚠️ 部分 - Schema 检索 (待集成 pgvector)
+│   │   ├── chart_generator.rs  ⚠️ 部分 - 图表生成 (待集成 ECharts)
 │   │   └── data_masker.rs     ✅ 完成 - 数据脱敏
 │   ├── models/
 │   │   ├── mod.rs             ✅ 完成
@@ -153,7 +197,7 @@ week2/backend/
 │   │   └── conversation_repo.rs ✅ 完成
 │   ├── middleware/
 │   │   ├── mod.rs             ✅ 完成
-│   │   ├── auth.rs            ✅ 完成 - JWT 认证
+│   │   ├── auth.rs            ⚠️ 部分 - JWT 认证 (待完善中间件)
 │   │   ├── logging.rs         ✅ 完成 - 请求日志
 │   │   └── error_handler.rs   ✅ 完成 - 错误处理
 │   └── utils/
@@ -165,7 +209,7 @@ week2/backend/
     └── 001_initial_schema.sql ✅ 完成 - 数据库架构
 ```
 
-### 前端文件 ✅
+### 前端文件 ⚠️ 部分完成
 
 ```
 week2/frontend/
@@ -181,6 +225,7 @@ week2/frontend/
 │   ├── api/
 │   │   ├── client.ts         ✅ 完成 - Axios 配置
 │   │   └── auth.ts           ✅ 完成 - 认证 API
+│   │   └── (其他 API 文件待创建)
 │   ├── types/
 │   │   └── api.ts            ✅ 完成 - 类型定义
 │   ├── stores/
@@ -190,11 +235,109 @@ week2/frontend/
 │   ├── pages/
 │   │   ├── LoginPage.tsx     ✅ 完成 - 登录页
 │   │   ├── SqlWorkspacePage.tsx ✅ 完成 - SQL 工作区
-│   │   └── ChatWorkspacePage.tsx ✅ 完成 - 对话工作区
-│   └── components/
-│       └── Layout/
-│           └── MainLayout.tsx ✅ 完成 - 主布局
+│   │   ├── ChatWorkspacePage.tsx ✅ 完成 - 对话工作区
+│   │   └── Dashboard.tsx     ✅ 完成 - 首页仪表盘
+│   ├── components/
+│   │   └── Layout/
+│   │       └── MainLayout.tsx ✅ 完成 - 主布局
+│   └── hooks/                 ❌ 待创建 - 自定义 Hooks
+│       ├── useSqlExecute.ts
+│       ├── useNlConvert.ts
+│       └── useChart.ts
 ```
+
+### 前端缺失组件清单
+
+| 组件 | 状态 | 优先级 | 说明 |
+|-----|------|-------|------|
+| components/Editor/SqlEditor.tsx | ⏳ 待创建 | 高 | Monaco 编辑器封装 |
+| components/Charts/ChartRenderer.tsx | ⏳ 待创建 | 中 | ECharts 图表渲染器 |
+| components/Common/Button.tsx | ⏳ 待创建 | 低 | 通用按钮组件 |
+| components/Common/Modal.tsx | ⏳ 待创建 | 低 | 通用弹窗组件 |
+| components/Common/Table.tsx | ⏳ 待创建 | 中 | 通用表格组件 |
+| pages/SqlMode/ConnectionPanel.tsx | ⏳ 待创建 | 中 | 连接面板 |
+| pages/SqlMode/QueryResult.tsx | ⏳ 待创建 | 中 | 查询结果组件 |
+| pages/SqlMode/ExecutionPlan.tsx | ⏳ 待创建 | 低 | 执行计划展示 |
+| pages/ChatMode/SqlPreviewModal.tsx | ⏳ 待创建 | 中 | SQL 预览弹窗 |
+| pages/Admin/UserManagement.tsx | ⏳ 待创建 | 中 | 用户管理页面 |
+| pages/Admin/RoleManagement.tsx | ⏳ 待创建 | 低 | 角色管理页面 |
+| pages/Admin/AuditLog.tsx | ⏳ 待创建 | 低 | 审计日志页面 |
+
+---
+
+## API 处理器实现清单
+
+### 认证 API (Auth)
+| 端点 | 方法 | 状态 | 说明 |
+|-----|------|------|------|
+| /api/v1/auth/login | POST | ✅ | 用户登录 (完整实现) |
+| /api/v1/auth/register | POST | ✅ | 用户注册 (完整实现) |
+| /api/v1/auth/refresh | POST | ✅ | 刷新 Token (完整实现) |
+| /api/v1/auth/logout | POST | ⚠️ mock | 用户登出 (待完善 token 黑名单) |
+
+### 用户 API (Users)
+| 端点 | 方法 | 状态 | 说明 |
+|-----|------|------|------|
+| /api/v1/users | GET | ✅ | 列出用户 (完整实现) |
+| /api/v1/users/{id} | GET | ✅ | 获取用户详情 (完整实现) |
+| /api/v1/users/{id} | PUT | ✅ | 更新用户 (完整实现) |
+| /api/v1/users/{id} | DELETE | ✅ | 删除用户 (完整实现) |
+| /api/v1/users/{id}/password | PUT | ✅ | 修改密码 (完整实现) |
+
+### 连接 API (Connections)
+| 端点 | 方法 | 状态 | 说明 |
+|-----|------|------|------|
+| /api/v1/connections | GET | ✅ | 列出连接 (完整实现) |
+| /api/v1/connections | POST | ✅ | 创建连接 (完整实现) |
+| /api/v1/connections/{id} | GET | ✅ | 获取连接详情 (完整实现) |
+| /api/v1/connections/{id} | PUT | ✅ | 更新连接 (完整实现) |
+| /api/v1/connections/{id} | DELETE | ✅ | 删除连接 (完整实现) |
+| /api/v1/connections/{id}/test | POST | ⚠️ mock | 测试连接 (返回模拟数据) |
+| /api/v1/connections/{id}/default | PUT | ✅ | 设为默认 (完整实现) |
+| /api/v1/connections/{id}/schema | GET | ⚠️ mock | 获取 Schema (返回模拟数据) |
+
+### SQL API
+| 端点 | 方法 | 状态 | 说明 |
+|-----|------|------|------|
+| /api/v1/sql/execute | POST | ⚠️ mock | 执行 SQL (返回模拟数据) |
+| /api/v1/sql/format | POST | ⚠️ mock | 格式化 SQL (仅返回原 SQL) |
+| /api/v1/sql/history | GET | ✅ | 查询历史 (完整实现) |
+| /api/v1/sql/explain | POST | ⚠️ mock | 执行计划 (返回模拟数据) |
+| /api/v1/sql/preview | POST | ⚠️ mock | 预览数据 (返回模拟数据) |
+
+### NL API
+| 端点 | 方法 | 状态 | 说明 |
+|-----|------|------|------|
+| /api/v1/nl/convert | POST | ⚠️ mock | NL 转 SQL (返回模拟数据) |
+| /api/v1/nl/execute | POST | ⚠️ mock | NL 执行 (返回模拟数据) |
+
+### 对话 API (Conversations)
+| 端点 | 方法 | 状态 | 说明 |
+|-----|------|------|------|
+| /api/v1/conversations | GET | ✅ | 列出对话 (完整实现) |
+| /api/v1/conversations | POST | ✅ | 创建对话 (完整实现) |
+| /api/v1/conversations/{id} | GET | ✅ | 获取对话 (完整实现) |
+| /api/v1/conversations/{id} | DELETE | ✅ | 删除对话 (完整实现) |
+| /api/v1/conversations/{id}/messages | GET | ✅ | 消息列表 (完整实现) |
+| /api/v1/conversations/{id}/messages | POST | ⚠️ 部分 | 发送消息 (AI 回复为模拟) |
+
+### 图表 API (Charts)
+| 端点 | 方法 | 状态 | 说明 |
+|-----|------|------|------|
+| /api/v1/charts/recommend | GET | ⚠️ mock | 推荐图表 (返回模拟数据) |
+| /api/v1/charts/generate | POST | ⚠️ mock | 生成图表 (返回模拟 ECharts 配置) |
+| /api/v1/charts/export | POST | ⚠️ mock | 导出图表 (返回模拟 URL) |
+
+### 指标 API (Metrics)
+| 端点 | 方法 | 状态 | 说明 |
+|-----|------|------|------|
+| /api/v1/metrics | GET | ⚠️ mock | 列出指标 (返回空列表) |
+| /api/v1/metrics | POST | ⚠️ 部分 | 创建指标 (仅构建对象，未持久化) |
+| /api/v1/metrics/{id} | GET | ⚠️ mock | 获取指标 (返回模拟数据) |
+| /api/v1/metrics/{id} | PUT | ⚠️ mock | 更新指标 (仅返回模拟响应) |
+| /api/v1/metrics/{id} | DELETE | ⚠️ mock | 删除指标 (仅返回成功响应) |
+| /api/v1/metrics/{id}/execute | POST | ⚠️ mock | 执行指标 (返回模拟数据) |
+| /api/v1/metrics/{id}/lineage | GET | ⚠️ mock | 指标血缘 (返回模拟数据) |
 
 ---
 
@@ -219,83 +362,7 @@ week2/frontend/
 | 21:30 | 创建前端 stores | authStore, connectionStore, chatStore |
 | 21:35 | 创建前端页面 | LoginPage, SqlWorkspacePage, ChatWorkspacePage |
 | 21:50 | **实现全部 API 处理器** | api/routes.rs |
-| 21:55 | 更新进度追踪 | PROGRESS.md |
-
----
-
-## API 处理器实现清单
-
-### 认证 API (Auth)
-| 端点 | 方法 | 状态 | 说明 |
-|-----|------|------|------|
-| /api/v1/auth/login | POST | ✅ | 用户登录 |
-| /api/v1/auth/register | POST | ✅ | 用户注册 |
-| /api/v1/auth/refresh | POST | ✅ | 刷新 Token |
-| /api/v1/auth/logout | POST | ✅ | 用户登出 |
-
-### 用户 API (Users)
-| 端点 | 方法 | 状态 | 说明 |
-|-----|------|------|------|
-| /api/v1/users | GET | ✅ | 列出用户 |
-| /api/v1/users/{id} | GET | ✅ | 获取用户详情 |
-| /api/v1/users/{id} | PUT | ✅ | 更新用户 |
-| /api/v1/users/{id} | DELETE | ✅ | 删除用户 |
-| /api/v1/users/{id}/password | PUT | ✅ | 修改密码 |
-
-### 连接 API (Connections)
-| 端点 | 方法 | 状态 | 说明 |
-|-----|------|------|------|
-| /api/v1/connections | GET | ✅ | 列出连接 |
-| /api/v1/connections | POST | ✅ | 创建连接 |
-| /api/v1/connections/{id} | GET | ✅ | 获取连接详情 |
-| /api/v1/connections/{id} | PUT | ✅ | 更新连接 |
-| /api/v1/connections/{id} | DELETE | ✅ | 删除连接 |
-| /api/v1/connections/{id}/test | POST | ✅ | 测试连接 |
-| /api/v1/connections/{id}/default | PUT | ✅ | 设为默认 |
-| /api/v1/connections/{id}/schema | GET | ✅ | 获取 Schema |
-
-### SQL API
-| 端点 | 方法 | 状态 | 说明 |
-|-----|------|------|------|
-| /api/v1/sql/execute | POST | ✅ | 执行 SQL |
-| /api/v1/sql/format | POST | ✅ | 格式化 SQL |
-| /api/v1/sql/history | GET | ✅ | 查询历史 |
-| /api/v1/sql/explain | POST | ✅ | 执行计划 |
-| /api/v1/sql/preview | POST | ✅ | 预览数据 |
-
-### NL API
-| 端点 | 方法 | 状态 | 说明 |
-|-----|------|------|------|
-| /api/v1/nl/convert | POST | ✅ | NL 转 SQL |
-| /api/v1/nl/execute | POST | ✅ | NL 执行 |
-
-### 对话 API (Conversations)
-| 端点 | 方法 | 状态 | 说明 |
-|-----|------|------|------|
-| /api/v1/conversations | GET | ✅ | 列出对话 |
-| /api/v1/conversations | POST | ✅ | 创建对话 |
-| /api/v1/conversations/{id} | GET | ✅ | 获取对话 |
-| /api/v1/conversations/{id} | DELETE | ✅ | 删除对话 |
-| /api/v1/conversations/{id}/messages | GET | ✅ | 消息列表 |
-| /api/v1/conversations/{id}/messages | POST | ✅ | 发送消息 |
-
-### 图表 API (Charts)
-| 端点 | 方法 | 状态 | 说明 |
-|-----|------|------|------|
-| /api/v1/charts/recommend | GET | ✅ | 推荐图表 |
-| /api/v1/charts/generate | POST | ✅ | 生成图表 |
-| /api/v1/charts/export | POST | ✅ | 导出图表 |
-
-### 指标 API (Metrics)
-| 端点 | 方法 | 状态 | 说明 |
-|-----|------|------|------|
-| /api/v1/metrics | GET | ✅ | 列出指标 |
-| /api/v1/metrics | POST | ✅ | 创建指标 |
-| /api/v1/metrics/{id} | GET | ✅ | 获取指标 |
-| /api/v1/metrics/{id} | PUT | ✅ | 更新指标 |
-| /api/v1/metrics/{id} | DELETE | ✅ | 删除指标 |
-| /api/v1/metrics/{id}/execute | POST | ✅ | 执行指标 |
-| /api/v1/metrics/{id}/lineage | GET | ✅ | 指标血缘 |
+| 21:55 | 更新进度追踪 | PROGRESS.md (本版本) |
 
 ---
 
@@ -329,12 +396,16 @@ pnpm dev
 
 ### 4. 继续下一个任务
 
-根据 `阶段进度详情` 中标记为 `⏳ 待开始` 的任务继续：
+根据 `阶段进度详情` 中标记为 `⏳ 待开始` 或 `⚠️ 部分完成` 的任务继续：
 
 **优先级顺序：**
-1. 语义配置页面（Phase 5）
-2. 管理后台页面（Phase 6）
-3. Docker 配置（Phase 7）
+1. **集成真实 SQL 执行** (Phase 2) - 将 mock API 替换为真实数据库执行
+2. **集成 LLM API** (Phase 3) - 配置 OpenAI/Claude API
+3. **创建前端图表组件** (Phase 4) - ChartRenderer
+4. **创建连接管理页面** (Phase 5) - 连接面板
+5. **语义配置页面** (Phase 5)
+6. **管理后台页面** (Phase 6)
+7. **Docker 配置** (Phase 7)
 
 ---
 
@@ -353,9 +424,23 @@ pnpm dev
 
 1. **数据库连接**：需要配置实际的目标数据库连接
 2. **LLM 调用**：实际生产环境需要配置真实的 LLM API 密钥
+3. **JWT 认证**：中间件 `get_user_id_from_headers` 目前返回 nil UUID，待完善
+4. **前端组件**：多个前端组件尚未创建 (见前端缺失组件清单)
+5. **pgvector**：Schema RAG 检索需要安装 pgvector 扩展
 
 ---
 
-> 文档版本: 1.2.0
+## 待集成的外部服务
+
+| 服务 | 状态 | 配置项 | 说明 |
+|-----|------|-------|------|
+| OpenAI API | ⏳ 待配置 | LLM_OPENAI_API_KEY | NL 转 SQL |
+| PostgreSQL | ⏳ 待配置 | DATABASE_URL | 元数据存储 |
+| Redis | ⏳ 可选 | REDIS_URL | 缓存、会话 |
+| pgvector | ⏳ 可选 | - | 向量检索 (Schema RAG) |
+
+---
+
+> 文档版本: 1.3.0
 > 创建时间: 2026-05-30
 > 最后更新: 2026-05-30 21:55

@@ -211,7 +211,7 @@ impl AppError {
 pub type AppResult<T> = Result<T, AppError>;
 
 /// 便捷的转换实现
-impl<T> From<sqlx::Error> for AppError {
+impl From<sqlx::Error> for AppError {
     fn from(err: sqlx::Error) -> Self {
         tracing::error!("Database error: {:?}", err);
         match err {
@@ -222,21 +222,21 @@ impl<T> From<sqlx::Error> for AppError {
     }
 }
 
-impl<T> From<reqwest::Error> for AppError {
+impl From<reqwest::Error> for AppError {
     fn from(err: reqwest::Error) -> Self {
         tracing::error!("HTTP client error: {:?}", err);
         AppError::LlmError(err.to_string())
     }
 }
 
-impl<T> From<serde_json::Error> for AppError {
+impl From<serde_json::Error> for AppError {
     fn from(err: serde_json::Error) -> Self {
         tracing::error!("JSON parse error: {:?}", err);
         AppError::InternalError(format!("JSON 解析失败: {}", err))
     }
 }
 
-impl<T> From<validator::ValidationErrors> for AppError {
+impl From<validator::ValidationErrors> for AppError {
     fn from(err: validator::ValidationErrors) -> Self {
         let messages: Vec<String> = err
             .field_errors()
