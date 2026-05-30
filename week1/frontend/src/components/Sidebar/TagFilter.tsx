@@ -9,7 +9,7 @@ export default function TagFilter({ value, onChange }: TagFilterProps) {
   const { data, loading } = useTags()
   return (
     <fieldset>
-      <legend className="mb-2 font-medium text-gray-700">标签</legend>
+      <legend className="mb-2 font-medium" style={{ color: '#6C757D' }}>标签</legend>
       {loading ? (
         <p className="text-xs text-gray-400">加载中...</p>
       ) : data.length === 0 ? (
@@ -21,14 +21,16 @@ export default function TagFilter({ value, onChange }: TagFilterProps) {
             return (
               <label
                 key={tag}
-                className="flex cursor-pointer items-center gap-2 text-gray-700 hover:text-gray-900"
+                className="flex cursor-pointer items-center gap-2 transition-colors duration-200 hover:text-gray-900"
+                style={{ color: '#6C757D' }}
               >
                 <input
                   type="radio"
                   name="tag-filter"
                   checked={checked}
                   onChange={() => onChange(tag)}
-                  className="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
+                  className="h-4 w-4 border-gray-300 transition-colors duration-200 focus:ring-2 focus:ring-primary focus:ring-offset-2"
+                  style={{ accentColor: '#0066FF' }}
                 />
                 <span>{tag}</span>
               </label>
@@ -38,7 +40,8 @@ export default function TagFilter({ value, onChange }: TagFilterProps) {
             <button
               type="button"
               onClick={() => onChange(undefined)}
-              className="text-xs text-blue-600 hover:underline"
+              className="text-xs transition-colors duration-200 hover:underline"
+              style={{ color: '#0066FF' }}
             >
               清除
             </button>

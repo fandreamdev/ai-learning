@@ -17,7 +17,8 @@ export default function PriorityRadio({ value, onChange, disabled }: PriorityRad
         return (
           <label
             key={p}
-            className="flex cursor-pointer items-center gap-1.5 text-sm text-gray-700"
+            className="flex cursor-pointer items-center gap-1.5 text-sm transition-colors duration-200"
+            style={{ color: '#6C757D' }}
           >
             <input
               type="radio"
@@ -26,7 +27,8 @@ export default function PriorityRadio({ value, onChange, disabled }: PriorityRad
               checked={checked}
               onChange={() => onChange(p)}
               disabled={disabled}
-              className="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
+              className="h-4 w-4 border-gray-300 transition-colors duration-200 focus:ring-2 focus:ring-primary focus:ring-offset-2"
+              style={{ accentColor: '#0066FF' }}
             />
             <span
               aria-hidden

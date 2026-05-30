@@ -17,12 +17,12 @@ export const PRIORITY_LABEL: Record<TicketPriority, string> = {
   urgent: '紧急',
 }
 
-/** 优先级颜色（spec §4.2） */
+/** Priority colors — MotherDuck palette (spec §4.2) */
 export const PRIORITY_COLOR: Record<TicketPriority, string> = {
-  low: '#999999',
-  medium: '#1890FF',
-  high: '#FA8C16',
-  urgent: '#F5222D',
+  low: '#6C757D',     // gray-600: subdued
+  medium: '#0066FF',  // primary: confident blue
+  high: '#FA8C16',    // amber-orange: attention
+  urgent: '#FF4D4F',  // warm red: urgent alert
 }
 
 /**

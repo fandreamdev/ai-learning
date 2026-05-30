@@ -22,7 +22,6 @@
     "paths": {
       "@/*": ["src/*"]
     },
-    "ignoreDeprecations": "6.0",
     "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom"]
   },
   "include": ["src", "vitest.setup.ts"]

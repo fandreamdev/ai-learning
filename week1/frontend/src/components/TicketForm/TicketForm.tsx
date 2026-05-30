@@ -161,7 +161,8 @@ export default function TicketForm({ open, initial, onClose, onSubmitted }: Tick
               type="button"
               onClick={requestClose}
               disabled={submitting}
-              className="rounded-md border border-gray-300 bg-white px-4 py-1.5 text-sm text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-lg border border-gray-200 bg-white px-4 py-1.5 text-sm transition-colors duration-200 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+              style={{ color: '#6C757D' }}
             >
               取消
             </button>
@@ -169,7 +170,8 @@ export default function TicketForm({ open, initial, onClose, onSubmitted }: Tick
               type="button"
               onClick={handleSubmit}
               disabled={submitting}
-              className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-lg px-4 py-1.5 text-sm font-medium text-white transition-colors duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+              style={{ backgroundColor: '#0066FF' }}
             >
               {submitting ? '保存中...' : '保存'}
             </button>
@@ -184,8 +186,8 @@ export default function TicketForm({ open, initial, onClose, onSubmitted }: Tick
           }}
         >
           <div>
-            <label className="mb-1 block font-medium text-gray-700">
-              标题 <span className="text-red-500">*</span>
+            <label className="mb-1 block font-medium" style={{ color: '#6C757D' }}>
+              标题 <span style={{ color: '#FF4D4F' }}>*</span>
             </label>
             <input
               type="text"
@@ -196,25 +198,27 @@ export default function TicketForm({ open, initial, onClose, onSubmitted }: Tick
               }}
               maxLength={200}
               autoFocus
-              className={`w-full rounded-md border ${
-                titleErr ? 'border-red-300' : 'border-gray-300'
-              } bg-white px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500`}
+              className={`w-full rounded-lg border bg-white px-3 py-2 text-sm transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-primary/20 ${
+                titleErr ? 'border-red-300' : 'border-gray-200'
+              }`}
+              style={{ color: '#1A1F26' }}
             />
-            {titleErr && <p className="mt-1 text-xs text-red-600">{titleErr}</p>}
+            {titleErr && <p className="mt-1 text-xs" style={{ color: '#FF4D4F' }}>{titleErr}</p>}
           </div>
 
           <div>
-            <label className="mb-1 block font-medium text-gray-700">描述</label>
+            <label className="mb-1 block font-medium" style={{ color: '#6C757D' }}>描述</label>
             <textarea
               value={form.description}
               onChange={(e) => setForm((s) => ({ ...s, description: e.target.value }))}
               rows={4}
-              className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm transition-colors duration-200 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+              style={{ color: '#1A1F26' }}
             />
           </div>
 
           <div>
-            <label className="mb-1 block font-medium text-gray-700">优先级</label>
+            <label className="mb-1 block font-medium" style={{ color: '#6C757D' }}>优先级</label>
             <PriorityRadio
               value={form.priority}
               onChange={(p) => setForm((s) => ({ ...s, priority: p }))}
@@ -222,7 +226,7 @@ export default function TicketForm({ open, initial, onClose, onSubmitted }: Tick
           </div>
 
           <div>
-            <label className="mb-1 block font-medium text-gray-700">负责人</label>
+            <label className="mb-1 block font-medium" style={{ color: '#6C757D' }}>负责人</label>
             <input
               type="text"
               list="assignee-options"
@@ -230,7 +234,8 @@ export default function TicketForm({ open, initial, onClose, onSubmitted }: Tick
               maxLength={100}
               onChange={(e) => setForm((s) => ({ ...s, assignee: e.target.value }))}
               placeholder="可选；输入或从下拉选择"
-              className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm transition-colors duration-200 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+              style={{ color: '#1A1F26' }}
             />
             <datalist id="assignee-options">
               {assignees.map((name) => (

@@ -8,12 +8,12 @@ export default function EmptyState({
   description = '尝试调整筛选条件，或点击右上角按钮创建第一个 Ticket。',
 }: EmptyStateProps) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-gray-300 bg-white p-12 text-center">
-      <div className="mb-3 grid h-12 w-12 place-items-center rounded-full bg-gray-100 text-2xl text-gray-400">
-        📋
+    <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-gray-200 bg-white p-12 text-center transition-colors duration-200">
+      <div className="mb-3 grid h-12 w-12 place-items-center rounded-full" style={{ backgroundColor: '#F8F9FA' }}>
+        <span className="text-2xl" style={{ color: '#6C757D' }}>📋</span>
       </div>
-      <p className="font-medium text-gray-700">{title}</p>
-      <p className="mt-1 text-sm text-gray-500">{description}</p>
+      <p className="font-medium" style={{ color: '#6C757D' }}>{title}</p>
+      <p className="mt-1 text-sm" style={{ color: '#6C757D', opacity: 0.7 }}>{description}</p>
     </div>
   )
 }

@@ -5,13 +5,14 @@ interface ErrorToastProps {
 
 export default function ErrorToast({ message, onRetry }: ErrorToastProps) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+    <div className="flex items-center justify-between gap-3 rounded-lg border px-4 py-3 text-sm" style={{ borderColor: '#FF4D4F', backgroundColor: '#FFF1F0', color: '#FF4D4F' }}>
       <span>⚠️ {message}</span>
       {onRetry && (
         <button
           type="button"
           onClick={onRetry}
-          className="rounded-md border border-red-300 bg-white px-3 py-1 text-xs text-red-700 transition hover:bg-red-100"
+          className="rounded-lg border px-3 py-1 text-xs transition-colors duration-200 hover:opacity-80"
+          style={{ borderColor: '#FF4D4F', color: '#FF4D4F', backgroundColor: 'transparent' }}
         >
           重试
         </button>
