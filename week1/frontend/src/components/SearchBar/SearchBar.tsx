@@ -51,7 +51,8 @@ export default function SearchBar({
       value={input}
       onChange={(e) => setInput(e.target.value)}
       placeholder="搜索 Ticket 标题或描述..."
-      className="w-full rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+      className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm transition-colors duration-200 focus:border-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20"
+      style={{ color: '#1A1F26' }}
       aria-label="搜索 Ticket"
     />
   )

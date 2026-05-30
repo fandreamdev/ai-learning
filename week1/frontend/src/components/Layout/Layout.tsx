@@ -13,12 +13,12 @@ interface LayoutProps {
  */
 export default function Layout({ header, sidebar, children }: LayoutProps) {
   return (
-    <div className="flex min-h-screen flex-col bg-gray-50">
-      <header className="sticky top-0 z-20 h-14 border-b border-gray-200 bg-white shadow-sm">
+    <div className="flex min-h-screen flex-col" style={{ backgroundColor: 'var(--color-gray-50)' }}>
+      <header className="sticky top-0 z-20 h-14 border-b border-gray-200" style={{ backgroundColor: 'rgba(255,255,255,0.8)', backdropFilter: 'blur(8px)' }}>
         {header}
       </header>
       <div className="flex flex-1 overflow-hidden">
-        <aside className="hidden w-60 shrink-0 border-r border-gray-200 bg-white md:block">
+        <aside className="hidden w-60 shrink-0 border-r border-gray-200 md:block" style={{ backgroundColor: '#ffffff' }}>
           {sidebar}
         </aside>
         <main className="flex-1 overflow-y-auto p-6">{children}</main>

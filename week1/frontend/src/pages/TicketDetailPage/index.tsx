@@ -57,11 +57,11 @@ export default function TicketDetailPage() {
     return (
       <main className="mx-auto max-w-3xl p-8">
         <div className="space-y-4">
-          <div className="h-4 w-24 animate-pulse rounded bg-gray-200" />
-          <div className="h-8 w-48 animate-pulse rounded bg-gray-200" />
+          <div className="h-4 w-24 animate-pulse rounded" style={{ backgroundColor: '#E9ECEF' }} />
+          <div className="h-8 w-48 animate-pulse rounded" style={{ backgroundColor: '#E9ECEF' }} />
           <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-6">
             {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="h-3 w-full animate-pulse rounded bg-gray-100" />
+              <div key={i} className="h-3 w-full animate-pulse rounded" style={{ backgroundColor: '#F0F0F0' }} />
             ))}
           </div>
         </div>
@@ -76,38 +76,40 @@ export default function TicketDetailPage() {
       <button
         type="button"
         onClick={() => navigate(-1)}
-        className="mb-4 text-sm text-blue-600 hover:underline"
+        className="mb-4 text-sm transition-colors duration-200 hover:underline"
+        style={{ color: '#0066FF' }}
       >
         ← 返回列表
       </button>
 
-      <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-        <header className="mb-4 border-b border-gray-100 pb-3">
-          <p className="text-xs text-gray-500">Ticket #{ticket.id}</p>
-          <h1 className="mt-1 text-2xl font-semibold text-gray-900">{ticket.title}</h1>
+      <div className="rounded-lg border border-gray-200 bg-white">
+        <header className="mb-4 border-b border-gray-100 pb-3 px-6 pt-6">
+          <p className="text-xs" style={{ color: '#6C757D' }}>Ticket #{ticket.id}</p>
+          <h1 className="mt-1 text-2xl font-semibold" style={{ color: '#1A1F26' }}>{ticket.title}</h1>
         </header>
 
-        <dl className="grid grid-cols-[5rem_1fr] gap-y-3 text-sm text-gray-700">
-          <dt className="text-gray-500">状态</dt>
+        <dl className="grid grid-cols-[5rem_1fr] gap-y-3 px-6 pb-6 text-sm">
+          <dt className="font-medium" style={{ color: '#6C757D' }}>状态</dt>
           <dd>
             <StatusSelect ticket={ticket} onChanged={setData} />
           </dd>
 
-          <dt className="text-gray-500">优先级</dt>
+          <dt className="font-medium" style={{ color: '#6C757D' }}>优先级</dt>
           <dd>
             <PriorityBadge priority={ticket.priority} />
           </dd>
 
-          <dt className="text-gray-500">负责人</dt>
-          <dd>{ticket.assignee || '-'}</dd>
+          <dt className="font-medium" style={{ color: '#6C757D' }}>负责人</dt>
+          <dd style={{ color: '#6C757D' }}>{ticket.assignee || '-'}</dd>
 
-          <dt className="text-gray-500">标签</dt>
+          <dt className="font-medium" style={{ color: '#6C757D' }}>标签</dt>
           <dd className="flex flex-wrap gap-1.5">
             {ticket.tags?.length ? (
               ticket.tags.map((t) => (
                 <span
                   key={t}
-                  className="inline-flex items-center rounded-md bg-gray-100 px-1.5 py-0.5 text-xs text-gray-700"
+                  className="inline-flex items-center rounded-md px-1.5 py-0.5 text-xs font-medium"
+                  style={{ backgroundColor: '#F0F4FF', color: '#0066FF' }}
                 >
                   {t}
                 </span>
@@ -117,17 +119,17 @@ export default function TicketDetailPage() {
             )}
           </dd>
 
-          <dt className="text-gray-500">创建时间</dt>
-          <dd className="text-xs text-gray-500">{formatDateTime(ticket.created_at)}</dd>
+          <dt className="font-medium" style={{ color: '#6C757D' }}>创建时间</dt>
+          <dd className="text-xs" style={{ color: '#6C757D' }}>{formatDateTime(ticket.created_at)}</dd>
 
-          <dt className="text-gray-500">更新时间</dt>
-          <dd className="text-xs text-gray-500">{formatDateTime(ticket.updated_at)}</dd>
+          <dt className="font-medium" style={{ color: '#6C757D' }}>更新时间</dt>
+          <dd className="text-xs" style={{ color: '#6C757D' }}>{formatDateTime(ticket.updated_at)}</dd>
         </dl>
 
-        <section className="mt-5 border-t border-gray-100 pt-4">
-          <h2 className="mb-2 text-sm font-medium text-gray-700">描述</h2>
+        <section className="border-t border-gray-100 px-6 pb-6 pt-4">
+          <h2 className="mb-2 text-sm font-medium" style={{ color: '#6C757D' }}>描述</h2>
           {ticket.description ? (
-            <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
+            <p className="whitespace-pre-wrap text-sm leading-relaxed" style={{ color: '#1A1F26' }}>
               {ticket.description}
             </p>
           ) : (
@@ -135,18 +137,20 @@ export default function TicketDetailPage() {
           )}
         </section>
 
-        <footer className="mt-6 flex justify-end gap-2 border-t border-gray-100 pt-4">
+        <footer className="flex justify-end gap-2 border-t border-gray-100 px-6 pb-6 pt-4">
           <button
             type="button"
             onClick={() => setEditOpen(true)}
-            className="rounded-md border border-gray-300 bg-white px-4 py-1.5 text-sm text-gray-700 transition hover:bg-gray-50"
+            className="rounded-lg border border-gray-200 bg-white px-4 py-1.5 text-sm transition-colors duration-200 hover:bg-gray-50"
+            style={{ color: '#6C757D' }}
           >
             编辑
           </button>
           <button
             type="button"
             onClick={() => setConfirmDeleteOpen(true)}
-            className="rounded-md border border-red-300 bg-white px-4 py-1.5 text-sm text-red-600 transition hover:bg-red-50"
+            className="rounded-lg border px-4 py-1.5 text-sm transition-colors duration-200 hover:opacity-90"
+            style={{ borderColor: '#FF4D4F', color: '#FF4D4F', backgroundColor: 'transparent' }}
           >
             删除
           </button>

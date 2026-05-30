@@ -64,7 +64,7 @@ export default function TicketListPage() {
       >
         <div className="mx-auto flex max-w-[1400px] flex-col gap-4">
           <div className="flex items-center justify-between">
-            <h1 className="text-xl font-semibold text-gray-900">Ticket 列表</h1>
+            <h1 className="text-xl font-semibold" style={{ color: '#1A1F26' }}>Ticket 列表</h1>
             <SortBar
               sortBy={query.sort_by ?? 'created_at'}
               sortOrder={query.sort_order ?? 'desc'}

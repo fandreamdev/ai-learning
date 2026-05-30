@@ -35,12 +35,13 @@ export default function Sidebar({
   return (
     <div className="flex h-full flex-col gap-6 overflow-y-auto p-4 text-sm">
       <div className="flex items-center justify-between">
-        <h2 className="font-semibold text-gray-900">筛选条件</h2>
+        <h2 className="font-semibold" style={{ color: '#1A1F26' }}>筛选条件</h2>
         {hasAnyFilter && (
           <button
             type="button"
             onClick={onClearAll}
-            className="text-xs text-blue-600 hover:underline"
+            className="text-xs transition-colors duration-200 hover:underline"
+            style={{ color: '#0066FF' }}
           >
             清除全部
           </button>

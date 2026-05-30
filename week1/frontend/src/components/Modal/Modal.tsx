@@ -78,14 +78,14 @@ export default function Modal({
       >
         {title && (
           <header className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
-            <h2 id="modal-title" className="text-base font-semibold text-gray-900">
+            <h2 id="modal-title" className="text-base font-semibold" style={{ color: '#1A1F26' }}>
               {title}
             </h2>
             <button
               type="button"
               onClick={onClose}
               aria-label="关闭"
-              className="text-gray-400 transition hover:text-gray-700"
+              className="text-gray-400 transition-colors duration-200 hover:text-gray-700"
             >
               ✕
             </button>
@@ -93,7 +93,7 @@ export default function Modal({
         )}
         <div className="px-5 py-4">{children}</div>
         {footer && (
-          <footer className="flex items-center justify-end gap-2 border-t border-gray-200 bg-gray-50 px-5 py-3">
+          <footer className="flex items-center justify-end gap-2 border-t border-gray-100 px-5 py-3" style={{ backgroundColor: '#F8F9FA' }}>
             {footer}
           </footer>
         )}

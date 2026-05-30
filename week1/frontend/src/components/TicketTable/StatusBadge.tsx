@@ -3,9 +3,9 @@ import type { TicketStatus } from '@/types/ticket'
 
 const STATUS_BG: Record<TicketStatus, string> = {
   open: 'bg-gray-100 text-gray-700',
-  in_progress: 'bg-blue-100 text-blue-700',
-  done: 'bg-green-100 text-green-700',
-  closed: 'bg-gray-300 text-gray-600',
+  in_progress: 'bg-blue-50 text-primary',
+  done: 'bg-emerald-50 text-emerald-700',
+  closed: 'bg-gray-200 text-gray-500',
 }
 
 export default function StatusBadge({ status }: { status: TicketStatus }) {

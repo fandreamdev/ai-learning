@@ -13,13 +13,12 @@ interface TicketTableProps {
 }
 
 export default function TicketTable({ items, loading }: TicketTableProps) {
-  if (loading) return <TableSkeleton />
   if (items.length === 0) return <EmptyState />
 
   return (
-    <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50 text-left text-xs uppercase text-gray-500">
+    <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+      <table className="min-w-full divide-y divide-gray-100">
+        <thead className="text-left text-xs uppercase" style={{ color: '#6C757D', backgroundColor: '#F8F9FA' }}>
           <tr>
             <th className="w-16 px-4 py-3 font-medium">ID</th>
             <th className="px-4 py-3 font-medium">标题</th>
@@ -29,14 +28,15 @@ export default function TicketTable({ items, loading }: TicketTableProps) {
             <th className="w-44 px-4 py-3 font-medium">更新时间</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-100 text-sm text-gray-700">
+        <tbody className="divide-y divide-gray-100 text-sm" style={{ color: '#1A1F26' }}>
           {items.map((t) => (
-            <tr key={t.id} className="transition hover:bg-blue-50">
-              <td className="px-4 py-3 text-gray-500">#{t.id}</td>
+            <tr key={t.id} className="transition-colors duration-200 hover:bg-gray-50/80">
+              <td className="px-4 py-3" style={{ color: '#6C757D' }}>#{t.id}</td>
               <td className="px-4 py-3">
                 <Link
                   to={`/tickets/${t.id}`}
-                  className="font-medium text-gray-900 hover:text-blue-600 hover:underline"
+                  className="font-medium transition-colors duration-200 hover:underline"
+                  style={{ color: '#1A1F26' }}
                 >
                   {t.title}
                 </Link>
@@ -45,7 +45,8 @@ export default function TicketTable({ items, loading }: TicketTableProps) {
                     {t.tags.map((tag) => (
                       <span
                         key={tag}
-                        className="inline-flex items-center rounded-md bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600"
+                        className="inline-flex items-center rounded-md px-1.5 py-0.5 text-xs"
+                        style={{ backgroundColor: '#F0F4FF', color: '#0066FF' }}
                       >
                         {tag}
                       </span>
@@ -59,8 +60,8 @@ export default function TicketTable({ items, loading }: TicketTableProps) {
               <td className="px-4 py-3">
                 <PriorityBadge priority={t.priority} />
               </td>
-              <td className="px-4 py-3 text-gray-600">{t.assignee || '-'}</td>
-              <td className="px-4 py-3 text-xs text-gray-500">{formatDateTime(t.updated_at)}</td>
+              <td className="px-4 py-3" style={{ color: '#6C757D' }}>{t.assignee || '-'}</td>
+              <td className="px-4 py-3 text-xs" style={{ color: '#6C757D' }}>{formatDateTime(t.updated_at)}</td>
             </tr>
           ))}
         </tbody>

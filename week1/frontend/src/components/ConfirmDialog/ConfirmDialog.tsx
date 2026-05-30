@@ -43,7 +43,8 @@ export default function ConfirmDialog({
             type="button"
             onClick={onCancel}
             disabled={loading}
-            className="rounded-md border border-gray-300 bg-white px-4 py-1.5 text-sm text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+            className="rounded-lg border border-gray-200 bg-white px-4 py-1.5 text-sm transition-colors duration-200 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+            style={{ color: '#6C757D' }}
           >
             {cancelText}
           </button>
@@ -53,9 +54,10 @@ export default function ConfirmDialog({
             disabled={loading}
             className={
               destructive
-                ? 'rounded-md bg-red-600 px-4 py-1.5 text-sm font-medium text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60'
-                : 'rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60'
+                ? 'rounded-lg px-4 py-1.5 text-sm font-medium text-white transition-colors duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60'
+                : 'rounded-lg px-4 py-1.5 text-sm font-medium text-white transition-colors duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60'
             }
+            style={destructive ? { backgroundColor: '#FF4D4F' } : { backgroundColor: '#0066FF' }}
           >
             {loading ? '处理中...' : confirmText}
           </button>

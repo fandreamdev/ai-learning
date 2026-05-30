@@ -69,14 +69,15 @@ export default function TagInput({
   return (
     <div className="space-y-2">
       <div
-        className={`flex min-h-9 flex-wrap items-center gap-1.5 rounded-md border ${
-          error ? 'border-red-300' : 'border-gray-300'
-        } bg-white px-2 py-1.5 focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500`}
+        className={`flex min-h-9 flex-wrap items-center gap-1.5 rounded-lg border bg-white px-2 py-1.5 transition-colors duration-200 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 ${
+          error ? 'border-red-300' : 'border-gray-200'
+        }`}
       >
         {value.map((tag) => (
           <span
             key={tag}
-            className="inline-flex items-center gap-1 rounded-md bg-blue-100 px-2 py-0.5 text-xs text-blue-700"
+            className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium"
+            style={{ backgroundColor: '#F0F4FF', color: '#0066FF' }}
           >
             {tag}
             <button
@@ -84,7 +85,8 @@ export default function TagInput({
               onClick={() => remove(tag)}
               disabled={disabled}
               aria-label={`移除 ${tag}`}
-              className="text-blue-500 transition hover:text-blue-700 disabled:cursor-not-allowed"
+              className="transition-colors duration-200 hover:opacity-70 disabled:cursor-not-allowed"
+              style={{ color: '#0066FF' }}
             >
               ✕
             </button>
@@ -101,11 +103,12 @@ export default function TagInput({
           onBlur={() => draft && tryAdd(draft)}
           disabled={disabled || value.length >= maxCount}
           placeholder={value.length === 0 ? '输入标签后回车...' : ''}
-          className="flex-1 min-w-[8rem] border-0 bg-transparent text-sm text-gray-700 placeholder:text-gray-400 focus:outline-none focus:ring-0 disabled:cursor-not-allowed"
+          className="flex-1 min-w-[8rem] border-0 bg-transparent text-sm placeholder:text-gray-400 focus:outline-none focus:ring-0 disabled:cursor-not-allowed"
+          style={{ color: '#1A1F26' }}
         />
       </div>
 
-      {error && <p className="text-xs text-red-600">{error}</p>}
+      {error && <p className="text-xs" style={{ color: '#FF4D4F' }}>{error}</p>}
 
       {remainingSuggestions.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5 text-xs">
@@ -116,7 +119,8 @@ export default function TagInput({
               type="button"
               onClick={() => tryAdd(s)}
               disabled={disabled || value.length >= maxCount}
-              className="rounded-md border border-gray-200 bg-white px-2 py-0.5 text-gray-600 transition hover:border-blue-300 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-lg border border-gray-200 bg-white px-2 py-0.5 text-xs transition-colors duration-200 hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+              style={{ color: '#6C757D' }}
             >
               + {s}
             </button>

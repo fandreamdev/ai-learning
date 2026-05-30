@@ -44,7 +44,8 @@ export default function StatusSelect({ ticket, onChanged }: StatusSelectProps) {
       value={ticket.status}
       onChange={handleChange}
       disabled={pending}
-      className="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+      className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-sm transition-colors duration-200 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
+      style={{ color: '#1A1F26' }}
       aria-label="切换状态"
     >
       <option value={ticket.status} disabled>
