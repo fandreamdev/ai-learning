@@ -1,0 +1,96 @@
+# SmartQuery AI 配置文件
+# 所有配置项都可以通过环境变量覆盖
+
+app:
+  name: "SmartQuery AI"
+  host: "0.0.0.0"
+  port: 8080
+  env: "development"
+
+database:
+  # PostgreSQL 配置 (元数据存储)
+  url: "postgresql://postgres:password@localhost:5432/smartquery"
+  max_connections: 20
+  min_connections: 5
+  connect_timeout: 10
+  idle_timeout: 600
+
+redis:
+  # Redis 配置 (缓存/会话)
+  url: "redis://localhost:6379"
+  max_connections: 10
+  pool_timeout: 5
+
+llm:
+  # LLM 配置
+  provider: "openai"  # openai / anthropic / local
+
+  # OpenAI 配置
+  openai:
+    api_key: "${OPENAI_API_KEY}"
+    base_url: "https://api.openai.com/v1"
+    model: "gpt-4o"
+    max_tokens: 4096
+    temperature: 0.1
+
+  # Anthropic 配置 (可选)
+  anthropic:
+    api_key: "${ANTHROPIC_API_KEY}"
+    base_url: "https://api.anthropic.com"
+    model: "claude-3-5-sonnet"
+    max_tokens: 4096
+    temperature: 0.1
+
+  # 本地模型配置 (可选)
+  local:
+    base_url: "http://localhost:11434/v1"
+    model: "llama3"
+    api_key: "ollama"
+
+jwt:
+  secret: "${JWT_SECRET}"
+  access_token_expires: 3600       # 1小时
+  refresh_token_expires: 604800    # 7天
+  issuer: "smartquery"
+
+security:
+  # 密码哈希配置
+  argon2:
+    memory_cost: 19456   # 19 MB
+    time_cost: 2
+    parallelism: 1
+
+  # CORS 配置
+  cors:
+    allowed_origins:
+      - "http://localhost:3000"
+      - "http://localhost:5173"
+    allowed_methods:
+      - "GET"
+      - "POST"
+      - "PUT"
+      - "DELETE"
+      - "OPTIONS"
+    allowed_headers:
+      - "Content-Type"
+      - "Authorization"
+      - "X-Request-ID"
+    max_age: 3600
+
+  # SQL 安全配置
+  sql:
+    max_query_length: 65536
+    query_timeout: 30000    # 毫秒
+    allow_dangerous_functions: false
+    blocked_functions:
+      - "LOAD_FILE"
+      - "INTO OUTFILE"
+      - "BENCHMARK"
+      - "SLEEP"
+      - "SHUTDOWN"
+
+logging:
+  level: "info"           # trace, debug, info, warn, error
+  format: "json"          # json, pretty
+  include_target: true
+  include_span_list: true
