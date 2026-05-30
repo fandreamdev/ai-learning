@@ -12,7 +12,7 @@ interface TicketTableProps {
   loading: boolean
 }
 
-export default function TicketTable({ items, loading }: TicketTableProps) {
+export default function TicketTable({ items }: TicketTableProps) {
   if (items.length === 0) return <EmptyState />
 
   return (
