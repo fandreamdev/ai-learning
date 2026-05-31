@@ -76,9 +76,6 @@ async-trait = "0.1"
 tokio-test = "0.4"
 tower = { version = "0.5", features = ["util"] }
 
-# Mock
-mockall = "0.13"
-
 # 断言
 pretty_assertions = "1.4"
 

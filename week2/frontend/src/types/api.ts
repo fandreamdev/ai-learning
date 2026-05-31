@@ -97,7 +97,7 @@ export interface Message {
   generated_sql?: string
   sql_explanation?: string
   execution_result?: unknown
-  chart_config?: ChartConfig
+  chart_config?: unknown
   created_at: string
 }
 

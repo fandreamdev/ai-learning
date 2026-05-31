@@ -165,9 +165,10 @@ Schema 信息：
         let content = llm_response
             .choices
             .first()
-            .map(|c| c.message.content.as_str())
-            .ok_or_else(|| AppError::LlmParseError("No content in response".to_string()))?
-            .to_string();
+            .ok_or_else(|| AppError::LlmParseError("No choices in OpenAI-compatible response".to_string()))?
+            .message
+            .content_text()
+            .ok_or_else(|| AppError::LlmParseError("No message content in OpenAI-compatible response".to_string()))?;
 
         Ok(content)
     }
@@ -194,8 +195,8 @@ Schema 信息：
 1. 只生成 SELECT 查询，不要生成 INSERT/UPDATE/DELETE
 2. 考虑性能，必要时添加 LIMIT
 3. 如果问题不明确，进行合理假设
-4. 只返回 SQL，不要其他解释
-5. 确保 SQL 语法正确
+4. 确保 SQL 语法正确
+5. 严格只返回 JSON，不要输出 Markdown 或额外解释
 
 ## 用户问题
 {}
@@ -337,27 +338,81 @@ struct LlmMessage {
     content: String,
 }
 
-/// LLM 响应
+/// OpenAI-compatible chat completions response
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 struct LlmResponse {
-    id: String,
+    id: Option<String>,
+    object: Option<String>,
+    created: Option<i64>,
+    model: Option<String>,
     choices: Vec<LlmChoice>,
-    usage: LlmUsage,
+    usage: Option<LlmUsage>,
 }
 
 /// LLM 选择
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct LlmChoice {
+    index: Option<u32>,
     message: LlmResponseMessage,
+    finish_reason: Option<String>,
 }
 
 /// LLM 响应消息
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 struct LlmResponseMessage {
-    role: String,
-    content: String,
+    role: Option<String>,
+    content: Option<OpenAiContent>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum OpenAiContent {
+    Text(String),
+    Parts(Vec<OpenAiContentPart>),
+}
+
+impl OpenAiContent {
+    fn as_text(&self) -> Option<String> {
+        match self {
+            Self::Text(text) => {
+                if text.is_empty() {
+                    None
+                } else {
+                    Some(text.clone())
+                }
+            }
+            Self::Parts(parts) => {
+                let text = parts
+                    .iter()
+                    .filter_map(|part| part.text.as_deref())
+                    .collect::<Vec<_>>()
+                    .join("");
+                if text.is_empty() {
+                    None
+                } else {
+                    Some(text)
+                }
+            }
+        }
+    }
+}
+
+/// Text part used by OpenAI-compatible multimodal message content.
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct OpenAiContentPart {
+    #[serde(rename = "type")]
+    part_type: Option<String>,
+    text: Option<String>,
+}
+
+impl LlmResponseMessage {
+    fn content_text(&self) -> Option<String> {
+        self.content.as_ref().and_then(OpenAiContent::as_text)
+    }
 }
 
 /// LLM 使用量

@@ -43,26 +43,17 @@ pub async fn nl_to_sql(
         None
     };
 
-    // 调用 LLM 转换
-    match llm_client.convert_nl_to_sql(&request.question, schema_context.as_deref()).await {
-        Ok(result) => Ok(Json(NlToSqlResponse {
-            sql: result.sql,
-            explanation: result.explanation,
-            confidence: result.confidence,
-            estimated_rows: result.estimated_rows,
-            referenced_tables: result.referenced_tables,
-        })),
-        Err(_) => {
-            // LLM 调用失败时返回模拟响应
-            Ok(Json(NlToSqlResponse {
-                sql: "SELECT 1".to_string(),
-                explanation: "示例解释".to_string(),
-                confidence: 0.9,
-                estimated_rows: Some(10),
-                referenced_tables: vec![],
-            }))
-        }
-    }
+    let result = llm_client
+        .convert_nl_to_sql(&request.question, schema_context.as_deref())
+        .await?;
+
+    Ok(Json(NlToSqlResponse {
+        sql: result.sql,
+        explanation: result.explanation,
+        confidence: result.confidence,
+        estimated_rows: result.estimated_rows,
+        referenced_tables: result.referenced_tables,
+    }))
 }
 
 /// NL 执行 SQL
@@ -92,36 +83,23 @@ pub async fn nl_execute(
     };
 
     // 调用 LLM 转换并执行
-    match llm_client.convert_nl_to_sql(&request.question, schema_context.as_deref()).await {
-        Ok(result) => {
-            // 执行生成的 SQL
-            let columns = vec![];
-            let rows = vec![];
-            let row_count = 0i64;
+    let result = llm_client
+        .convert_nl_to_sql(&request.question, schema_context.as_deref())
+        .await?;
 
-            // 生成图表建议
-            let chart_config = chart_generator.suggest_chart(&columns, &rows).ok();
+    let columns = vec![];
+    let rows = vec![];
+    let row_count = 0i64;
+    let chart_config = chart_generator.suggest_chart(&columns, &rows).ok();
 
-            Ok(Json(NlExecuteResponse {
-                columns,
-                rows,
-                row_count,
-                duration_ms: 0,
-                chart_config,
-                data_insight: Some(result.explanation),
-            }))
-        }
-        Err(_) => {
-            Ok(Json(NlExecuteResponse {
-                columns: vec![],
-                rows: vec![],
-                row_count: 0,
-                duration_ms: 0,
-                chart_config: None,
-                data_insight: Some("数据查询完成".to_string()),
-            }))
-        }
-    }
+    Ok(Json(NlExecuteResponse {
+        columns,
+        rows,
+        row_count,
+        duration_ms: 0,
+        chart_config,
+        data_insight: Some(result.explanation),
+    }))
 }
 
 /// 列出对话

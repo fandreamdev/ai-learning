@@ -2,13 +2,24 @@ import { useState, useRef, useEffect } from 'react'
 import { Send, Database, MessageSquare } from 'lucide-react'
 import { useChatStore } from '@/stores/chatStore'
 import { useConnectionStore } from '@/stores/connectionStore'
+import { api } from '@/api/client'
 import type { Message, NlConvertResponse } from '@/types/api'
 
+interface NlExecuteResponse {
+  columns: Array<{ name: string; data_type: string; ordinal: number }>
+  rows: unknown[][]
+  row_count: number
+  duration_ms: number
+  chart_config?: unknown
+  data_insight?: string
+}
+
 export default function ChatWorkspacePage() {
-  const { messages, addMessage, isLoading, setLoading } = useChatStore()
-  const { currentConnectionId } = useConnectionStore()
+  const { messages, addMessage, updateMessage, isLoading, setLoading } = useChatStore()
+  const { connections, currentConnectionId } = useConnectionStore()
 
   const [input, setInput] = useState('')
+  const [executingMessageId, setExecutingMessageId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const scrollToBottom = () => {
@@ -35,19 +46,14 @@ export default function ChatWorkspacePage() {
     setLoading(true)
 
     try {
-      const response = await fetch('/api/v1/nl/convert', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('smartquery-auth')}`,
-        },
-        body: JSON.stringify({
-          connection_id: currentConnectionId,
-          question: input,
-        }),
+      const currentConnection = connections.find((conn) => conn.id === currentConnectionId)
+      const response = await api.post('/nl/convert', {
+        connection_id: currentConnectionId,
+        question: input,
+        dialect: currentConnection?.db_type || 'mysql',
       })
 
-      const data = await response.json()
+      const data = response.data
 
       if (data.code === 0) {
         const result: NlConvertResponse = data.data
@@ -83,6 +89,38 @@ export default function ChatWorkspacePage() {
       addMessage(errorMessage)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleExecuteGeneratedSql = async (message: Message) => {
+    if (!currentConnectionId || !message.generated_sql) return
+
+    setExecutingMessageId(message.id)
+    try {
+      const response = await api.post('/nl/execute', {
+        connection_id: currentConnectionId,
+        sql: message.generated_sql,
+      })
+      const data = response.data
+
+      if (data.code === 0) {
+        const result: NlExecuteResponse = data.data
+        updateMessage(message.id, {
+          execution_result: result,
+          chart_config: result.chart_config,
+          content: result.data_insight || `查询完成，返回 ${result.row_count} 行，耗时 ${result.duration_ms} ms。`,
+        })
+      } else {
+        updateMessage(message.id, {
+          content: data.message || '执行查询失败',
+        })
+      }
+    } catch {
+      updateMessage(message.id, {
+        content: '执行查询失败，请检查连接和 SQL 后重试。',
+      })
+    } finally {
+      setExecutingMessageId(null)
     }
   }
 
@@ -150,9 +188,20 @@ export default function ChatWorkspacePage() {
                         <pre className="text-sm font-mono text-gray-800 overflow-x-auto">
                           {message.generated_sql}
                         </pre>
-                        <button className="mt-3 btn-primary text-sm py-1.5">
-                          执行查询
+                        <button
+                          className="mt-3 btn-primary text-sm py-1.5"
+                          disabled={executingMessageId === message.id}
+                          onClick={() => handleExecuteGeneratedSql(message)}
+                        >
+                          {executingMessageId === message.id ? '执行中...' : '执行查询'}
                         </button>
+                        {Boolean(message.execution_result) && (
+                          <div className="mt-3 text-xs text-gray-600">
+                            查询完成：
+                            {(message.execution_result as NlExecuteResponse).row_count} 行，
+                            耗时 {(message.execution_result as NlExecuteResponse).duration_ms} ms
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

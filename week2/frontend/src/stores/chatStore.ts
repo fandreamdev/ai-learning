@@ -11,6 +11,7 @@ interface ChatState {
   setCurrentConversation: (id: string | null) => void
   setMessages: (messages: Message[]) => void
   addMessage: (message: Message) => void
+  updateMessage: (id: string, message: Partial<Message>) => void
   updateLastMessage: (message: Partial<Message>) => void
   setLoading: (loading: boolean) => void
   clearMessages: () => void
@@ -35,6 +36,13 @@ export const useChatStore = create<ChatState>()((set) => ({
   addMessage: (message) =>
     set((state) => ({
       messages: [...state.messages, message],
+    })),
+
+  updateMessage: (id, updates) =>
+    set((state) => ({
+      messages: state.messages.map((msg) =>
+        msg.id === id ? { ...msg, ...updates } : msg
+      ),
     })),
 
   updateLastMessage: (updates) =>

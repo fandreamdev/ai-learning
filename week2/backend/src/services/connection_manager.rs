@@ -20,6 +20,7 @@ pub enum ConnectionPool {
     Postgres(PgPool),
     Mysql(MySqlPool),
     Sqlite(SqlitePool),
+    Clickhouse(ConnectionConfig),
 }
 
 /// 连接管理器
@@ -120,10 +121,7 @@ impl ConnectionManager {
                 let pool = self.get_sqlite_pool(config).await?;
                 Ok(ConnectionPool::Sqlite(pool))
             }
-            _ => Err(AppError::validation(format!(
-                "不支持的数据库类型: {:?}",
-                config.db_type
-            ))),
+            DatabaseType::Clickhouse => Ok(ConnectionPool::Clickhouse(config.clone())),
         }
     }
 
@@ -181,6 +179,20 @@ impl ConnectionManager {
             .await
             .map_err(|e| AppError::database(format!("查询版本失败: {}", e)))?;
         Ok(format!("SQLite {}", version.0))
+    }
+
+    pub async fn test_connection_clickhouse(&self, config: &ConnectionConfig) -> AppResult<String> {
+        let value = self
+            .clickhouse_query_json(config, "SELECT version() AS version FORMAT JSON")
+            .await?;
+        let version = value
+            .get("data")
+            .and_then(|v| v.as_array())
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("version"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AppError::database("ClickHouse version response is invalid".to_string()))?;
+        Ok(format!("ClickHouse {}", version))
     }
 
     /// 获取数据库 Schema 信息
@@ -266,7 +278,29 @@ impl ConnectionManager {
                     columns: vec![],
                 }).collect())
             }
-            _ => Err(AppError::validation("不支持的数据库类型".to_string())),
+            DatabaseType::Clickhouse => {
+                let sql = format!(
+                    "SELECT name AS table_name, database AS table_schema, engine AS table_type, comment FROM system.tables WHERE database = '{}' ORDER BY name FORMAT JSON",
+                    escape_clickhouse_string(&config.database_name)
+                );
+                let value = self.clickhouse_query_json(config, &sql).await?;
+                let rows = value
+                    .get("data")
+                    .and_then(|v| v.as_array())
+                    .ok_or_else(|| AppError::database("ClickHouse schema response is invalid".to_string()))?;
+
+                Ok(rows
+                    .iter()
+                    .map(|row| TableInfo {
+                        table_name: json_string(row, "table_name"),
+                        table_schema: json_string(row, "table_schema"),
+                        table_type: json_string(row, "table_type"),
+                        comment: json_optional_string(row, "comment"),
+                        row_count: None,
+                        columns: vec![],
+                    })
+                    .collect())
+            }
         }
     }
 
@@ -356,8 +390,61 @@ impl ConnectionManager {
                     comment: None,
                 }).collect())
             }
-            _ => Err(AppError::validation("不支持的数据库类型".to_string())),
+            DatabaseType::Clickhouse => {
+                let sql = format!(
+                    "SELECT name, type AS data_type, default_expression AS default_value, comment FROM system.columns WHERE database = '{}' AND table = '{}' ORDER BY position FORMAT JSON",
+                    escape_clickhouse_string(table_schema),
+                    escape_clickhouse_string(table_name)
+                );
+                let value = self.clickhouse_query_json(config, &sql).await?;
+                let rows = value
+                    .get("data")
+                    .and_then(|v| v.as_array())
+                    .ok_or_else(|| AppError::database("ClickHouse columns response is invalid".to_string()))?;
+
+                Ok(rows
+                    .iter()
+                    .map(|row| ColumnInfo {
+                        name: json_string(row, "name"),
+                        data_type: json_string(row, "data_type"),
+                        nullable: json_string(row, "data_type").starts_with("Nullable("),
+                        default_value: json_optional_string(row, "default_value"),
+                        comment: json_optional_string(row, "comment"),
+                    })
+                    .collect())
+            }
         }
+    }
+
+    async fn clickhouse_query_json(
+        &self,
+        config: &ConnectionConfig,
+        sql: &str,
+    ) -> AppResult<serde_json::Value> {
+        let response = reqwest::Client::new()
+            .post(config.clickhouse_http_url())
+            .basic_auth(&config.username, Some(&config.password))
+            .query(&[("database", config.database_name.as_str())])
+            .body(sql.to_string())
+            .send()
+            .await
+            .map_err(|e| AppError::database(format!("ClickHouse 请求失败: {}", e)))?;
+
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|e| AppError::database(format!("读取 ClickHouse 响应失败: {}", e)))?;
+
+        if !status.is_success() {
+            return Err(AppError::database(format!(
+                "ClickHouse 返回错误 {}: {}",
+                status, body
+            )));
+        }
+
+        serde_json::from_str(&body)
+            .map_err(|e| AppError::database(format!("解析 ClickHouse JSON 失败: {}", e)))
     }
 
     /// 缓存连接配置
@@ -434,6 +521,28 @@ impl ConnectionConfig {
         }
         Ok(format!("sqlite://{}", self.database_name))
     }
+
+    pub fn clickhouse_http_url(&self) -> String {
+        format!("http://{}:{}/", self.host, self.port)
+    }
+}
+
+fn escape_clickhouse_string(input: &str) -> String {
+    input.replace('\\', "\\\\").replace('\'', "\\'")
+}
+
+fn json_string(row: &serde_json::Value, key: &str) -> String {
+    row.get(key)
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn json_optional_string(row: &serde_json::Value, key: &str) -> Option<String> {
+    row.get(key)
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.is_empty())
+        .map(ToString::to_string)
 }
 
 /// 表信息

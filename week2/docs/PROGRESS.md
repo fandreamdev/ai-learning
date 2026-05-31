@@ -100,7 +100,16 @@
 | `ExecutionPlan.tsx` | ✅ 已完成 | 已修复复制按钮重复 JSX 属性导致的语法错误 |
 | `SqlWorkspacePage.tsx` SQL 格式化 | ✅ 已完成 | `handleFormat` 已调用 `/sql/format` API 并回填编辑器 |
 | 前端源码中文文案 | ✅ 已完成 | 当前构建涉及的中文源码已按 UTF-8 正常解析，构建通过 |
-| SQL 执行认证头 | ✅ 已完成 | SQL 格式化已使用 Axios API 客户端；SQL 执行页仍保留 fetch，后续可统一迁移到 API 客户端 |
+| SQL 执行认证头 | ✅ 已完成 | SQL 执行页已统一改为 Axios API 客户端，自动携带 access token |
+| 认证响应解包 | ✅ 已完成 | `authApi` 和 refresh 拦截器已按后端 `{ code, message, data }` 结构解包 |
+| 用户管理认证头 | ✅ 已完成 | 用户列表/禁用已改为 Axios API 客户端，避免读取错误 localStorage key |
+| NL 转 SQL 前端请求 | ✅ 已完成 | 对话页已使用 Axios API 客户端，并按当前连接传入 dialect |
+| NL 确认执行链路 | ✅ 已完成 | 对话页“执行查询”按钮已调用 `/nl/execute` 并回填执行摘要 |
+| 图表 Hooks 请求体 | ✅ 已完成 | `useChart` 已按后端 `columns/rows/chart_type/config` 契约调用，默认导出 SVG |
+| OpenAI 兼容响应解析 | ✅ 已完成 | `LlmClient` 已兼容 OpenAI chat completions 响应结构，支持字符串和分段 content |
+| ClickHouse 最小链路 | ✅ 已完成 | 已通过 ClickHouse HTTP 接口支持连接测试、Schema 获取、SELECT 执行、预览、EXPLAIN、指标执行和 SQL 格式化 |
+| PNG 图表导出 | ✅ 已完成 | `/charts/export` 已支持写入前端传入的 PNG data URL/base64 |
+| 运行时 Mock 清理 | ✅ 已完成 | 未接入备用对话模块不再在 LLM 失败时返回模拟 SQL；运行时源码未发现 mock/模拟返回 |
 | 通用组件 | ✅ 已完成 | 已创建 `Common/Button`、`Common/Modal`、`Common/Table` 并通过构建 |
 | SQL 编辑器封装 | ✅ 已完成 | 已创建 `components/Editor/SqlEditor.tsx` 并通过构建 |
 | 角色管理页面 | ✅ 已完成 | 已创建 `pages/Admin/RoleManagement.tsx` 并通过构建 |
@@ -224,7 +233,7 @@
 |------|------|
 | `cargo check` in `week2/backend` | ✅ 通过 |
 | `npm run build` in `week2/frontend` | ✅ 通过 |
-| `rg "TODO\\|Mock\\|模拟" week2/backend/src week2/frontend/src` | ✅ 无阻塞项 | 前端 SQL 格式化 TODO 已处理；剩余模拟/fallback 属于容错或示例数据 |
+| `rg "mockall\\|automock\\|mock\\|Mock\\|模拟\\|not implemented\\|未实现" week2/backend/src week2/frontend/src week2/backend/Cargo.toml` | ✅ 无运行时 mock/未实现项 | 剩余 PNG 文案为入参校验提示，不是未实现 |
 
 ---
 

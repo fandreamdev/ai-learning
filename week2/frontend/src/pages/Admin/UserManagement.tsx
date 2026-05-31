@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Search, Plus, Edit2, Trash2, Shield, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { UserPublic, UserRole } from '@/types/api';
+import { api } from '@/api/client';
 
 interface UserManagementProps {
   currentUserId?: string;
@@ -19,12 +20,8 @@ export function UserManagement({ currentUserId }: UserManagementProps) {
   const fetchUsers = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/v1/users', {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('access_token')}`,
-        },
-      });
-      const data = await response.json();
+      const response = await api.get('/users');
+      const data = response.data;
       if (data.code === 0) {
         setUsers(data.data.items || []);
       }
@@ -43,13 +40,8 @@ export function UserManagement({ currentUserId }: UserManagementProps) {
     if (!confirm('确定要删除此用户吗？')) return;
 
     try {
-      const response = await fetch(`/api/v1/users/${userId}`, {
-        method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('access_token')}`,
-        },
-      });
-      const result = await response.json();
+      const response = await api.delete(`/users/${userId}`);
+      const result = response.data;
       if (result.code === 0) {
         toast.success('用户已删除');
         fetchUsers();

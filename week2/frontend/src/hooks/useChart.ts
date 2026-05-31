@@ -4,8 +4,10 @@ import { apiClient } from '@/api/client';
 export type ChartType = 'line' | 'bar' | 'pie' | 'scatter' | 'radar' | 'funnel' | 'gauge';
 
 export interface ChartRecommendResult {
+  recommended: ChartType;
   recommended_types: ChartType[];
   reasons: string[];
+  chart_config?: Record<string, unknown>;
 }
 
 export interface ChartGenerateResult {
@@ -14,7 +16,7 @@ export interface ChartGenerateResult {
 }
 
 export interface ChartData {
-  columns: Array<{ name: string; data_type: string }>;
+  columns: Array<{ name: string; data_type: string; ordinal?: number }>;
   rows: unknown[][];
 }
 
@@ -22,14 +24,17 @@ export function useChart() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const recommend = useCallback(async (columns: ChartData['columns'], rowCount: number) => {
+  const recommend = useCallback(async (data: ChartData) => {
     setLoading(true);
     setError(null);
 
     try {
       const response = await apiClient.post<{ data: ChartRecommendResult }>('/charts/recommend', {
-        columns,
-        row_count: rowCount,
+        columns: data.columns.map((column, index) => ({
+          ...column,
+          ordinal: column.ordinal ?? index,
+        })),
+        rows: data.rows,
       });
       return response.data.data;
     } catch (err) {
@@ -46,32 +51,19 @@ export function useChart() {
 
   const generate = useCallback(async (
     chartType: ChartType,
-    data: ChartData,
-    options?: {
-      title?: string;
-      xAxis?: string;
-      yAxis?: string;
-      seriesName?: string;
-    }
+    data: ChartData
   ) => {
     setLoading(true);
     setError(null);
 
     try {
-      const xData = data.rows.map(row => String(row[0]));
-      const seriesData = data.rows.map(row => {
-        const val = row[1];
-        if (typeof val === 'number') return val;
-        if (typeof val === 'string') return parseFloat(val) || 0;
-        return 0;
-      });
-
       const response = await apiClient.post<{ data: ChartGenerateResult }>('/charts/generate', {
+        columns: data.columns.map((column, index) => ({
+          ...column,
+          ordinal: column.ordinal ?? index,
+        })),
+        rows: data.rows,
         chart_type: chartType,
-        title: options?.title || '数据图表',
-        x_data: xData,
-        series: seriesData,
-        series_name: options?.seriesName || '数值',
       });
       return response.data.data;
     } catch (err) {
@@ -85,7 +77,7 @@ export function useChart() {
 
   const exportChart = useCallback(async (
     chartConfig: Record<string, unknown>,
-    format: 'png' | 'jpg' | 'svg' | 'pdf' = 'png'
+    format: 'json' | 'svg' = 'svg'
   ) => {
     setLoading(true);
     setError(null);
@@ -94,7 +86,7 @@ export function useChart() {
       const response = await apiClient.post<{
         data: { format: string; url: string; filename: string };
       }>('/charts/export', {
-        chart_config: chartConfig,
+        config: chartConfig,
         format,
       });
       return response.data.data;

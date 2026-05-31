@@ -25,19 +25,12 @@ export default function SqlWorkspacePage() {
     setError(null)
 
     try {
-      const response = await fetch('/api/v1/sql/execute', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('smartquery-auth')}`,
-        },
-        body: JSON.stringify({
-          connection_id: currentConnectionId,
-          sql: sql,
-        }),
+      const response = await api.post('/sql/execute', {
+        connection_id: currentConnectionId,
+        sql: sql,
       })
 
-      const data = await response.json()
+      const data = response.data
 
       if (data.code === 0) {
         setResult(data.data)

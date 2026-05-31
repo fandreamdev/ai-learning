@@ -839,7 +839,9 @@ async fn test_connection_handler(
         DatabaseType::Sqlite => {
             state.connection_manager.test_connection_sqlite(&config).await
         }
-        _ => Err(AppError::validation("不支持的数据库类型".to_string())),
+        DatabaseType::Clickhouse => {
+            state.connection_manager.test_connection_clickhouse(&config).await
+        }
     };
 
     let latency_ms = start.elapsed().as_millis() as i64;
@@ -994,7 +996,7 @@ async fn sql_execute(
     sql: &str,
     db_type: &DatabaseType,
 ) -> AppResult<(Vec<ColumnMetadata>, Vec<Vec<serde_json::Value>>)> {
-    use sqlparser::dialect::{MySqlDialect, PostgreSqlDialect, SQLiteDialect};
+    use sqlparser::dialect::{ClickHouseDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
     use sqlparser::parser::Parser;
 
     validate_select_sql(state, sql)?;
@@ -1005,7 +1007,7 @@ async fn sql_execute(
             DatabaseType::Postgresql => Box::new(PostgreSqlDialect {}),
             DatabaseType::Mysql => Box::new(MySqlDialect {}),
             DatabaseType::Sqlite => Box::new(SQLiteDialect {}),
-            _ => return Err(AppError::validation("不支持的数据库类型".to_string())),
+            DatabaseType::Clickhouse => Box::new(ClickHouseDialect {}),
         };
 
         let ast = Parser::parse_sql(dialect.as_ref(), sql)
@@ -1047,6 +1049,7 @@ async fn sql_execute(
 
             Ok(extract_sqlite_rows_data(rows))
         }
+        ConnectionPool::Clickhouse(config) => clickhouse_select(config, sql).await,
     }
 }
 
@@ -1213,18 +1216,14 @@ async fn format_sql_handler(
     State(_state): State<Arc<AppState>>,
     Json(payload): Json<SqlFormatRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    use sqlparser::dialect::{MySqlDialect, PostgreSqlDialect, SQLiteDialect};
+    use sqlparser::dialect::{ClickHouseDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
     use sqlparser::parser::Parser;
 
     let dialect = match payload.dialect.as_str() {
         "mysql" => Box::new(MySqlDialect {}) as Box<dyn sqlparser::dialect::Dialect>,
         "postgresql" | "postgres" => Box::new(PostgreSqlDialect {}) as Box<dyn sqlparser::dialect::Dialect>,
         "sqlite" => Box::new(SQLiteDialect {}) as Box<dyn sqlparser::dialect::Dialect>,
-        "clickhouse" => {
-            return Err(AppError::ValidationError(
-                "ClickHouse SQL formatting is not implemented yet".to_string(),
-            ));
-        }
+        "clickhouse" => Box::new(ClickHouseDialect {}) as Box<dyn sqlparser::dialect::Dialect>,
         _ => {
             return Err(AppError::ValidationError(
                 "Unsupported SQL dialect".to_string(),
@@ -1312,6 +1311,7 @@ async fn build_execution_plan(
 ) -> AppResult<serde_json::Value> {
     let explain_sql = match pool_type {
         ConnectionPool::Sqlite(_) => format!("EXPLAIN QUERY PLAN {}", sql),
+        ConnectionPool::Clickhouse(_) => format!("EXPLAIN {}", sql),
         _ => format!("EXPLAIN {}", sql),
     };
 
@@ -1349,6 +1349,18 @@ async fn build_execution_plan(
                 .map(|row| {
                     (0..row.columns().len())
                         .map(|i| sqlite_value_to_json(&row, i).to_string())
+                        .collect::<Vec<_>>()
+                        .join("\t")
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+        ConnectionPool::Clickhouse(config) => {
+            let (_columns, rows) = clickhouse_select(config, &explain_sql).await?;
+            rows.into_iter()
+                .map(|row| {
+                    row.into_iter()
+                        .map(|value| value.to_string())
                         .collect::<Vec<_>>()
                         .join("\t")
                 })
@@ -1405,6 +1417,7 @@ async fn preview_data_handler(
                 .map_err(|e| AppError::database(format!("预览表数据失败: {}", e)))?;
             extract_sqlite_rows_data(rows)
         }
+        ConnectionPool::Clickhouse(config) => clickhouse_select(&config, &sql).await?,
     };
     let result_rows = mask_result_rows(&columns, result_rows);
 
@@ -1466,10 +1479,7 @@ fn validate_table_identifier(identifier: &str) -> AppResult<String> {
 
 fn ensure_supported_connection_type(db_type: DatabaseType) -> AppResult<()> {
     match db_type {
-        DatabaseType::Mysql | DatabaseType::Postgresql | DatabaseType::Sqlite => Ok(()),
-        DatabaseType::Clickhouse => Err(AppError::ValidationError(
-            "ClickHouse connection is not implemented yet".to_string(),
-        )),
+        DatabaseType::Mysql | DatabaseType::Postgresql | DatabaseType::Sqlite | DatabaseType::Clickhouse => Ok(()),
     }
 }
 
@@ -1973,6 +1983,88 @@ fn extract_sqlite_rows_data(rows: Vec<sqlx::sqlite::SqliteRow>) -> (Vec<ColumnMe
     (columns, result_rows)
 }
 
+async fn clickhouse_select(
+    config: &ConnectionConfig,
+    sql: &str,
+) -> AppResult<(Vec<ColumnMetadata>, Vec<Vec<serde_json::Value>>)> {
+    let query = ensure_clickhouse_json_format(sql);
+    let response = reqwest::Client::new()
+        .post(config.clickhouse_http_url())
+        .basic_auth(&config.username, Some(&config.password))
+        .query(&[("database", config.database_name.as_str())])
+        .body(query)
+        .send()
+        .await
+        .map_err(|e| AppError::database(format!("ClickHouse 查询失败: {}", e)))?;
+
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|e| AppError::database(format!("读取 ClickHouse 响应失败: {}", e)))?;
+
+    if !status.is_success() {
+        return Err(AppError::database(format!(
+            "ClickHouse 返回错误 {}: {}",
+            status, body
+        )));
+    }
+
+    let value: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|e| AppError::database(format!("解析 ClickHouse JSON 失败: {}", e)))?;
+
+    let meta = value
+        .get("meta")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| AppError::database("ClickHouse JSON 缺少 meta".to_string()))?;
+    let data = value
+        .get("data")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| AppError::database("ClickHouse JSON 缺少 data".to_string()))?;
+
+    let columns = meta
+        .iter()
+        .enumerate()
+        .map(|(index, column)| ColumnMetadata {
+            name: column
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            data_type: column
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            ordinal: index as i32,
+        })
+        .collect::<Vec<_>>();
+
+    let rows = data
+        .iter()
+        .map(|row| {
+            columns
+                .iter()
+                .map(|column| row.get(&column.name).cloned().unwrap_or(serde_json::Value::Null))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+
+    Ok((columns, rows))
+}
+
+fn ensure_clickhouse_json_format(sql: &str) -> String {
+    let trimmed = sql.trim().trim_end_matches(';').trim();
+    if regex::Regex::new(r"(?i)\bFORMAT\s+JSON\b")
+        .map(|re| re.is_match(trimmed))
+        .unwrap_or(false)
+    {
+        trimmed.to_string()
+    } else {
+        format!("{} FORMAT JSON", trimmed)
+    }
+}
+
 fn pg_value_to_json(row: &sqlx::postgres::PgRow, index: usize) -> serde_json::Value {
     if let Ok(v) = row.try_get::<serde_json::Value, _>(index) {
         return v;
@@ -2167,9 +2259,20 @@ async fn export_chart_handler(
             }
         }
         "png" => {
-            return Err(AppError::ValidationError(
-                "PNG export requires a rendering service and is not implemented yet".to_string(),
-            ));
+            let png_data = payload
+                .config
+                .get("png")
+                .or_else(|| payload.config.get("data_url"))
+                .or_else(|| payload.config.get("image_data"))
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| {
+                    AppError::ValidationError(
+                        "PNG export requires config.png, config.data_url, or config.image_data".to_string(),
+                    )
+                })?;
+            let png_bytes = decode_png_payload(png_data)?;
+            std::fs::write(&file_path, png_bytes)
+                .map_err(|e| AppError::internal(format!("写入 PNG 失败: {}", e)))?;
         }
         _ => {
             return Err(AppError::ValidationError(
@@ -2199,6 +2302,26 @@ async fn export_chart_handler(
     .await;
 
     Ok(Json(response))
+}
+
+fn decode_png_payload(input: &str) -> AppResult<Vec<u8>> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+
+    let base64_part = input
+        .strip_prefix("data:image/png;base64,")
+        .unwrap_or(input)
+        .trim();
+
+    let bytes = STANDARD
+        .decode(base64_part)
+        .map_err(|e| AppError::ValidationError(format!("无效的 PNG base64 数据: {}", e)))?;
+
+    const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+    if !bytes.starts_with(PNG_SIGNATURE) {
+        return Err(AppError::ValidationError("PNG 数据头无效".to_string()));
+    }
+
+    Ok(bytes)
 }
 
 // ==================== 指标处理器 ====================
@@ -2434,6 +2557,13 @@ async fn execute_metric_handler(
                 .await
                 .map_err(|e| AppError::database(format!("指标执行失败: {}", e)))?;
             sqlite_value_to_json(&row, 0)
+        }
+        ConnectionPool::Clickhouse(config) => {
+            let (_columns, rows) = clickhouse_select(&config, &sql).await?;
+            rows.first()
+                .and_then(|row| row.first())
+                .cloned()
+                .unwrap_or(serde_json::Value::Null)
         }
     };
 

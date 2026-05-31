@@ -46,12 +46,16 @@ api.interceptors.response.use(
             refresh_token: refreshToken,
           })
 
-          const { access_token, refresh_token } = response.data
+          const tokenData = response.data?.data
 
-          useAuthStore.getState().setTokens(access_token, refresh_token)
+          if (!tokenData?.access_token || !tokenData?.refresh_token) {
+            throw new Error('Invalid refresh response')
+          }
+
+          useAuthStore.getState().setTokens(tokenData.access_token, tokenData.refresh_token)
 
           if (originalRequest.headers) {
-            originalRequest.headers.Authorization = `Bearer ${access_token}`
+            originalRequest.headers.Authorization = `Bearer ${tokenData.access_token}`
           }
 
           return api(originalRequest)
