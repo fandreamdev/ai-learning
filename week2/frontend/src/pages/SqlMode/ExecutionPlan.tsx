@@ -191,9 +191,6 @@ export function ExecutionPlan({
           onClick={copyToClipboard}
           className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-200 rounded transition-colors"
         >
-          onClick={copyToClipboard}
-          className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-200 rounded transition-colors"
-        >
           {copied ? <Check size={14} /> : <Copy size={14} />}
           {copied ? '已复制' : '复制'}
         </button>

@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react'
 import Editor from '@monaco-editor/react'
-import { Play, Format, Database, Table, Download } from 'lucide-react'
+import { Play, Wand2, Database, Download } from 'lucide-react'
 import { useConnectionStore } from '@/stores/connectionStore'
+import { api } from '@/api/client'
 import type { SqlExecuteResponse } from '@/types/api'
 
 export default function SqlWorkspacePage() {
@@ -50,10 +51,18 @@ export default function SqlWorkspacePage() {
     }
   }, [currentConnectionId, sql])
 
-  const handleFormat = useCallback(() => {
-    // TODO: 调用格式化 API
-    console.log('Format SQL')
-  }, [])
+  const handleFormat = useCallback(async () => {
+    try {
+      const response = await api.post('/sql/format', {
+        sql,
+        dialect: currentConnection?.db_type || 'postgresql',
+      })
+      const formatted = response.data?.data?.formatted_sql
+      if (formatted) setSql(formatted)
+    } catch {
+      setError('SQL 格式化失败')
+    }
+  }, [currentConnection?.db_type, sql])
 
   return (
     <div className="h-full flex flex-col">
@@ -83,7 +92,7 @@ export default function SqlWorkspacePage() {
             className="btn-secondary flex items-center gap-1 py-1.5"
             title="格式化"
           >
-            <Format size={16} />
+            <Wand2 size={16} />
             <span className="text-sm">格式化</span>
           </button>
           <button

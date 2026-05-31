@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { Plus, Edit2, Trash2, CheckCircle, XCircle, Database, RefreshCw, Settings } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { connectionStore } from '@/stores/connectionStore';
+import { useConnectionStore } from '@/stores/connectionStore';
 import type { Connection, CreateConnectionRequest, DatabaseType } from '@/types/api';
 
 // 数据库类型选项
@@ -28,7 +28,7 @@ export function ConnectionPanel({ onConnectionSelect, compact = false }: Connect
     deleteConnection,
     testConnection,
     setDefaultConnection,
-  } = connectionStore();
+  } = useConnectionStore();
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingConnection, setEditingConnection] = useState<Connection | null>(null);
@@ -84,7 +84,7 @@ export function ConnectionPanel({ onConnectionSelect, compact = false }: Connect
   };
 
   const handleSelect = (conn: Connection) => {
-    connectionStore.setState({ selectedConnectionId: conn.id });
+    useConnectionStore.setState({ currentConnectionId: conn.id });
     onConnectionSelect?.(conn.id);
   };
 
@@ -95,12 +95,12 @@ export function ConnectionPanel({ onConnectionSelect, compact = false }: Connect
           className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           value={selectedConnectionId || ''}
           onChange={(e) => {
-            const conn = connections.find((c) => c.id === e.target.value);
+            const conn = connections.find((c: Connection) => c.id === e.target.value);
             if (conn) handleSelect(conn);
           }}
         >
           <option value="">选择连接...</option>
-          {connections.map((conn) => (
+          {connections.map((conn: Connection) => (
             <option key={conn.id} value={conn.id}>
               {conn.is_default ? '⭐ ' : ''}{conn.name}
             </option>
@@ -150,7 +150,7 @@ export function ConnectionPanel({ onConnectionSelect, compact = false }: Connect
         </div>
       ) : (
         <div className="space-y-3">
-          {connections.map((conn) => (
+          {connections.map((conn: Connection) => (
             <ConnectionCard
               key={conn.id}
               connection={conn}
@@ -242,9 +242,9 @@ function ConnectionCard({
         </div>
         <div className="flex items-center gap-1">
           {connection.status ? (
-            <CheckCircle size={18} className="text-green-500" title="已连接" />
+            <CheckCircle size={18} className="text-green-500" />
           ) : (
-            <XCircle size={18} className="text-gray-400" title="未连接" />
+            <XCircle size={18} className="text-gray-400" />
           )}
         </div>
       </div>

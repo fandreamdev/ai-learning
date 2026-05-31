@@ -18,7 +18,6 @@ export function QueryResult({
   rowCount,
   durationMs,
   loading = false,
-  onExport,
   onChart,
 }: QueryResultProps) {
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());

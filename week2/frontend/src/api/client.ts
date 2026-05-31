@@ -11,6 +11,8 @@ export const api = axios.create({
   },
 })
 
+export const apiClient = api
+
 // 请求拦截器：添加 Token
 api.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {

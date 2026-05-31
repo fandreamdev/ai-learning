@@ -20,6 +20,8 @@ export interface User {
   created_at: string
 }
 
+export type UserPublic = User
+
 export type UserRole = 'admin' | 'analyst' | 'developer' | 'business'
 
 export interface DatabaseConnection {
@@ -31,7 +33,21 @@ export interface DatabaseConnection {
   database_name: string
   username: string
   is_default: boolean
+  status?: boolean
   created_at: string
+}
+
+export type Connection = DatabaseConnection
+
+export interface CreateConnectionRequest {
+  name: string
+  db_type: DatabaseType
+  host: string
+  port: number
+  database_name: string
+  username: string
+  password: string
+  is_default?: boolean
 }
 
 export type DatabaseType = 'mysql' | 'postgresql' | 'clickhouse' | 'sqlite'

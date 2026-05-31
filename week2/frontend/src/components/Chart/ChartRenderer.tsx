@@ -92,7 +92,6 @@ export function ChartRenderer({
 
   // 构建图表配置
   const buildChartOption = useCallback((chartData: ChartData, cfg: ChartConfig): EChartsOption => {
-    const { columns, rows } = chartData;
     const baseOption: EChartsOption = {
       backgroundColor: 'transparent',
       color: CHART_COLORS,
@@ -215,10 +214,10 @@ function buildLineChart(
     yAxis: {
       type: 'value',
     },
-    series: yKeys.map((yKey, index) => ({
+    series: yKeys.map((yKey) => ({
       name: yKey,
       type: 'line',
-      data: data.rows.map((r) => r[yKey]),
+      data: data.rows.map((r) => toChartValue(r[yKey])),
       smooth: true,
       emphasis: { focus: 'series' },
     })),
@@ -246,7 +245,7 @@ function buildBarChart(
     series: yKeys.map((yKey) => ({
       name: yKey,
       type: 'bar',
-      data: data.rows.map((r) => r[yKey]),
+      data: data.rows.map((r) => toChartValue(r[yKey])),
       emphasis: { focus: 'series' },
     })),
   };
@@ -295,7 +294,7 @@ function buildScatterChart(
   cfg: ChartConfig
 ): EChartsOption {
   const xKey = cfg.xAxis || data.columns[0]?.name;
-  const yKey = cfg.yAxis || data.columns[1]?.name;
+  const yKey = Array.isArray(cfg.yAxis) ? cfg.yAxis[0] : cfg.yAxis || data.columns[1]?.name;
 
   return {
     ...base,
@@ -321,7 +320,7 @@ function buildScatterChart(
 function buildRadarChart(
   base: EChartsOption,
   data: ChartData,
-  cfg: ChartConfig
+  _cfg: ChartConfig
 ): EChartsOption {
   const indicatorKey = data.columns[0]?.name;
   const valueKeys = data.columns.slice(1).map((c) => c.name);
@@ -415,6 +414,14 @@ function buildGaugeChart(
       },
     ],
   };
+}
+
+function toChartValue(value: unknown): string | number | null {
+  if (typeof value === 'number' || typeof value === 'string') return value;
+  if (typeof value === 'boolean') return Number(value);
+  if (value == null) return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : String(value);
 }
 
 export default ChartRenderer;

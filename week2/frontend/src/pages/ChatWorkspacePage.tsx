@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Send, Database, BarChart3, MessageSquare } from 'lucide-react'
+import { Send, Database, MessageSquare } from 'lucide-react'
 import { useChatStore } from '@/stores/chatStore'
 import { useConnectionStore } from '@/stores/connectionStore'
 import type { Message, NlConvertResponse } from '@/types/api'

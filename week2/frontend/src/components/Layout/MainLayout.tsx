@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { Database, MessageSquare, Settings, LogOut } from 'lucide-react'
+import { Database, MessageSquare, LogOut } from 'lucide-react'
 import { useAuthStore } from '@/stores/authStore'
 
 export default function MainLayout() {

@@ -3,12 +3,12 @@
  */
 import { useState, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { login } from '@/api/auth'
+import { authApi } from '@/api/auth'
 import { useAuthStore } from '@/stores/authStore'
 
 export default function Login() {
   const navigate = useNavigate()
-  const { login: setAuth } = useAuthStore()
+  const { setUser, setTokens } = useAuthStore()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -20,8 +20,9 @@ export default function Login() {
     setIsLoading(true)
 
     try {
-      const response = await login({ username, password })
-      setAuth(response.user, response.access_token, response.refresh_token)
+      const response = await authApi.login({ username, password })
+      setUser(response.user)
+      setTokens(response.access_token, response.refresh_token)
       navigate('/')
     } catch (err) {
       setError(err instanceof Error ? err.message : '登录失败')

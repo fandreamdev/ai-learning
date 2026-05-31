@@ -11,8 +11,6 @@ export function UserManagement({ currentUserId }: UserManagementProps) {
   const [users, setUsers] = useState<UserPublic[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [showModal, setShowModal] = useState(false);
-  const [editingUser, setEditingUser] = useState<UserPublic | null>(null);
 
   useEffect(() => {
     fetchUsers();
@@ -103,10 +101,7 @@ export function UserManagement({ currentUserId }: UserManagementProps) {
           <p className="text-sm text-gray-500 mt-1">管理系统用户和权限</p>
         </div>
         <button
-          onClick={() => {
-            setEditingUser(null);
-            setShowModal(true);
-          }}
+          onClick={() => toast('用户创建功能待接入')}
           className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
         >
           <Plus size={18} />
@@ -177,10 +172,7 @@ export function UserManagement({ currentUserId }: UserManagementProps) {
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-2">
                       <button
-                        onClick={() => {
-                          setEditingUser(user);
-                          setShowModal(true);
-                        }}
+                        onClick={() => toast('用户编辑功能待接入')}
                         className="p-1.5 text-gray-500 hover:bg-gray-100 rounded"
                         title="编辑"
                       >

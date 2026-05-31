@@ -7,7 +7,7 @@ use axum::{
     routing::{delete, get, post, put},
     Json, Router,
 };
-use sqlx::{Column, Row};
+use sqlx::{Column, Row, TypeInfo};
 use std::sync::Arc;
 use uuid::Uuid;
 use chrono::Utc;
@@ -316,6 +316,10 @@ async fn refresh_handler(
         .get("refresh_token")
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::ValidationError("refresh_token is required".to_string()))?;
+
+    if state.token_blacklist.contains(refresh_token).await {
+        return Err(AppError::InvalidToken("Refresh token has been revoked".to_string()));
+    }
 
     let jwt_utils = crate::utils::jwt::JwtUtils::new(&state.config.jwt);
     let claims = jwt_utils.verify_refresh_token(refresh_token)?;
@@ -736,18 +740,45 @@ async fn get_schema_handler(
 
 // ==================== SQL 处理器 ====================
 
-// 简化的 SQL 执行 handler - 用于测试
 async fn execute_sql_handler(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
+    Extension(session): Extension<UserSession>,
     Json(payload): Json<SqlExecuteRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // 简化的响应
+    let config = get_connection_config(&state, payload.connection_id).await?;
+    let pool = state.connection_manager.get_pool(&config).await?;
+    let start = std::time::Instant::now();
+
+    let mut history = QueryHistory::new(
+        Some(payload.connection_id),
+        session.user_id,
+        payload.sql.clone(),
+    );
+
+    let (columns, rows) = match sql_execute(&pool, &payload.sql, &config.db_type).await {
+        Ok(result) => result,
+        Err(e) => {
+            history.mark_failed(e.to_string());
+            let _ = query_repo(&state).create(&history).await;
+            return Err(e);
+        }
+    };
+
+    let duration_ms = start.elapsed().as_millis() as i64;
+    let row_count = rows.len() as i64;
+    history.mark_success(duration_ms, row_count);
+    let history = query_repo(&state).create(&history).await.unwrap_or(history);
+
     Ok(Json(serde_json::json!({
         "code": 0,
-        "message": "SQL executed",
+        "message": "Success",
         "data": {
-            "connection_id": payload.connection_id,
-            "sql": payload.sql
+            "query_id": history.id,
+            "columns": columns,
+            "rows": rows,
+            "row_count": row_count,
+            "duration_ms": duration_ms,
+            "execution_plan": null
         }
     })))
 }
@@ -761,25 +792,26 @@ async fn sql_execute(
 ) -> AppResult<(Vec<ColumnMetadata>, Vec<Vec<serde_json::Value>>)> {
     use sqlparser::dialect::{MySqlDialect, PostgreSqlDialect};
     use sqlparser::parser::Parser;
-    use sqlx::Row;
 
     // 解析 SQL
-    let dialect: Box<dyn sqlparser::dialect::Dialect> = match db_type {
-        DatabaseType::Postgresql => Box::new(PostgreSqlDialect {}),
-        DatabaseType::Mysql => Box::new(MySqlDialect {}),
-        _ => return Err(AppError::validation("不支持的数据库类型".to_string())),
-    };
+    {
+        let dialect: Box<dyn sqlparser::dialect::Dialect> = match db_type {
+            DatabaseType::Postgresql => Box::new(PostgreSqlDialect {}),
+            DatabaseType::Mysql => Box::new(MySqlDialect {}),
+            _ => return Err(AppError::validation("不支持的数据库类型".to_string())),
+        };
 
-    let ast = Parser::parse_sql(dialect.as_ref(), sql)
-        .map_err(|e| AppError::validation(format!("SQL 解析失败: {}", e)))?
-        .into_iter()
-        .next()
-        .ok_or_else(|| AppError::validation("SQL 语句不能为空".to_string()))?;
+        let ast = Parser::parse_sql(dialect.as_ref(), sql)
+            .map_err(|e| AppError::validation(format!("SQL 解析失败: {}", e)))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| AppError::validation("SQL 语句不能为空".to_string()))?;
 
-    // 验证只允许 SELECT
-    match &ast {
-        sqlparser::ast::Statement::Query(_) => {}
-        _ => return Err(AppError::DmlForbidden("只允许执行 SELECT 查询".to_string())),
+        // 验证只允许 SELECT
+        match &ast {
+            sqlparser::ast::Statement::Query(_) => {}
+            _ => return Err(AppError::DmlForbidden("只允许执行 SELECT 查询".to_string())),
+        }
     }
 
     // 根据连接池类型执行查询
@@ -790,32 +822,7 @@ async fn sql_execute(
                 .await
                 .map_err(|e| AppError::database(format!("查询执行失败: {}", e)))?;
 
-            // 获取列信息
-            let columns: Vec<ColumnMetadata> = if rows.is_empty() {
-                vec![]
-            } else {
-                let num_cols = rows[0].columns().len();
-                (0..num_cols)
-                    .map(|i| ColumnMetadata {
-                        name: format!("column_{}", i + 1),
-                        data_type: "unknown".to_string(),
-                        ordinal: i as i32,
-                    })
-                    .collect()
-            };
-
-            // 转换为 JSON 值
-            let result_rows: Vec<Vec<serde_json::Value>> = rows
-                .iter()
-                .map(|row| {
-                    let num_cols = row.columns().len();
-                    (0..num_cols)
-                        .map(|i| row.try_get::<serde_json::Value, _>(i).unwrap_or(serde_json::Value::Null))
-                        .collect()
-                })
-                .collect();
-
-            Ok((columns, result_rows))
+            Ok(extract_pg_rows_data(rows))
         }
         ConnectionPool::Mysql(mysql_pool) => {
             let rows = sqlx::query(sql)
@@ -823,32 +830,7 @@ async fn sql_execute(
                 .await
                 .map_err(|e| AppError::database(format!("查询执行失败: {}", e)))?;
 
-            // 获取列信息
-            let columns: Vec<ColumnMetadata> = if rows.is_empty() {
-                vec![]
-            } else {
-                let num_cols = rows[0].columns().len();
-                (0..num_cols)
-                    .map(|i| ColumnMetadata {
-                        name: format!("column_{}", i + 1),
-                        data_type: "unknown".to_string(),
-                        ordinal: i as i32,
-                    })
-                    .collect()
-            };
-
-            // 转换为 JSON 值
-            let result_rows: Vec<Vec<serde_json::Value>> = rows
-                .iter()
-                .map(|row| {
-                    let num_cols = row.columns().len();
-                    (0..num_cols)
-                        .map(|i| row.try_get::<serde_json::Value, _>(i).unwrap_or(serde_json::Value::Null))
-                        .collect()
-                })
-                .collect();
-
-            Ok((columns, result_rows))
+            Ok(extract_mysql_rows_data(rows))
         }
     }
 }
@@ -1004,10 +986,12 @@ async fn preview_data_handler(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<PreviewDataRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let table_name = validate_table_identifier(&payload.table_name)?;
+    let limit = payload.limit.clamp(1, 1000);
     let config = get_connection_config(&state, payload.connection_id).await?;
     let pool_type = state.connection_manager.get_pool(&config).await?;
 
-    let sql = format!("SELECT * FROM {} LIMIT {}", payload.table_name, payload.limit);
+    let sql = format!("SELECT * FROM {} LIMIT {}", table_name, limit);
 
     let (columns, result_rows) = match pool_type {
         ConnectionPool::Postgres(pg_pool) => {
@@ -1033,11 +1017,21 @@ async fn preview_data_handler(
             "columns": columns,
             "rows": result_rows,
             "row_count": result_rows.len() as i64,
-            "table_name": payload.table_name
+            "table_name": table_name
         }
     });
 
     Ok(Json(response))
+}
+
+fn validate_table_identifier(identifier: &str) -> AppResult<String> {
+    let re = regex::Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$")
+        .map_err(|e| AppError::internal(format!("表名校验器初始化失败: {}", e)))?;
+    if re.is_match(identifier) {
+        Ok(identifier.to_string())
+    } else {
+        Err(AppError::ValidationError("Invalid table name".to_string()))
+    }
 }
 
 // ==================== NL 处理器 ====================
@@ -1090,29 +1084,47 @@ async fn nl_execute_handler(
     Json(payload): Json<NlExecuteRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let user_id = session.user_id;
+    let config = get_connection_config(&state, payload.connection_id).await?;
+    let pool = state.connection_manager.get_pool(&config).await?;
+    let start = std::time::Instant::now();
 
-    // 执行 NL 转换并执行 SQL
+    let mut history = QueryHistory::new(Some(payload.connection_id), user_id, payload.sql.clone());
+    let (columns, rows) = match sql_execute(&pool, &payload.sql, &config.db_type).await {
+        Ok(result) => result,
+        Err(e) => {
+            history.mark_failed(e.to_string());
+            let _ = query_repo(&state).create(&history).await;
+            return Err(e);
+        }
+    };
+
+    let duration_ms = start.elapsed().as_millis() as i64;
+    let row_count = rows.len() as i64;
+    history.mark_success(duration_ms, row_count);
+    let _ = query_repo(&state).create(&history).await;
+
+    let chart_config = if let Some(chart_type) = payload.chart_type.as_deref() {
+        let generator = ChartGenerator::new();
+        match generator.switch_chart_type(&columns, &rows, chart_type) {
+            Ok(config) => Some(config.echarts_config),
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+
     let response = serde_json::json!({
         "code": 0,
         "message": "Success",
         "data": {
-            "columns": [
-                {"name": "count", "data_type": "BIGINT", "ordinal": 0}
-            ],
-            "rows": [[1000]],
-            "row_count": 1,
-            "duration_ms": 150,
-            "chart_config": null,
-            "data_insight": "用户总数为 1000"
+            "columns": columns,
+            "rows": rows,
+            "row_count": row_count,
+            "duration_ms": duration_ms,
+            "chart_config": chart_config,
+            "data_insight": null
         }
     });
-
-    // 记录查询历史
-    let mut history = QueryHistory::new(Some(payload.connection_id), user_id, payload.sql);
-    history.mark_success(150, 1);
-
-    let repo = query_repo(&state);
-    let _ = repo.create(&history).await;
 
     Ok(Json(response))
 }
@@ -1294,7 +1306,7 @@ fn extract_pg_rows_data(rows: Vec<sqlx::postgres::PgRow>) -> (Vec<ColumnMetadata
             .enumerate()
             .map(|(i, col)| ColumnMetadata {
                 name: col.name().to_string(),
-                data_type: "unknown".to_string(),
+                data_type: col.type_info().name().to_string(),
                 ordinal: i as i32,
             })
             .collect()
@@ -1304,10 +1316,7 @@ fn extract_pg_rows_data(rows: Vec<sqlx::postgres::PgRow>) -> (Vec<ColumnMetadata
         .iter()
         .map(|row| {
             (0..row.columns().len())
-                .map(|i| {
-                    row.try_get::<serde_json::Value, _>(i)
-                        .unwrap_or(serde_json::Value::Null)
-                })
+                .map(|i| pg_value_to_json(row, i))
                 .collect()
         })
         .collect();
@@ -1327,7 +1336,7 @@ fn extract_mysql_rows_data(rows: Vec<sqlx::mysql::MySqlRow>) -> (Vec<ColumnMetad
             .enumerate()
             .map(|(i, col)| ColumnMetadata {
                 name: col.name().to_string(),
-                data_type: "unknown".to_string(),
+                data_type: col.type_info().name().to_string(),
                 ordinal: i as i32,
             })
             .collect()
@@ -1337,15 +1346,71 @@ fn extract_mysql_rows_data(rows: Vec<sqlx::mysql::MySqlRow>) -> (Vec<ColumnMetad
         .iter()
         .map(|row| {
             (0..row.columns().len())
-                .map(|i| {
-                    row.try_get::<serde_json::Value, _>(i)
-                        .unwrap_or(serde_json::Value::Null)
-                })
+                .map(|i| mysql_value_to_json(row, i))
                 .collect()
         })
         .collect();
 
     (columns, result_rows)
+}
+
+fn pg_value_to_json(row: &sqlx::postgres::PgRow, index: usize) -> serde_json::Value {
+    if let Ok(v) = row.try_get::<serde_json::Value, _>(index) {
+        return v;
+    }
+    if let Ok(v) = row.try_get::<String, _>(index) {
+        return serde_json::Value::String(v);
+    }
+    if let Ok(v) = row.try_get::<i64, _>(index) {
+        return serde_json::json!(v);
+    }
+    if let Ok(v) = row.try_get::<i32, _>(index) {
+        return serde_json::json!(v);
+    }
+    if let Ok(v) = row.try_get::<f64, _>(index) {
+        return serde_json::json!(v);
+    }
+    if let Ok(v) = row.try_get::<f32, _>(index) {
+        return serde_json::json!(v);
+    }
+    if let Ok(v) = row.try_get::<bool, _>(index) {
+        return serde_json::json!(v);
+    }
+    if let Ok(v) = row.try_get::<chrono::NaiveDateTime, _>(index) {
+        return serde_json::Value::String(v.to_string());
+    }
+    if let Ok(v) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(index) {
+        return serde_json::Value::String(v.to_rfc3339());
+    }
+    serde_json::Value::Null
+}
+
+fn mysql_value_to_json(row: &sqlx::mysql::MySqlRow, index: usize) -> serde_json::Value {
+    if let Ok(v) = row.try_get::<serde_json::Value, _>(index) {
+        return v;
+    }
+    if let Ok(v) = row.try_get::<String, _>(index) {
+        return serde_json::Value::String(v);
+    }
+    if let Ok(v) = row.try_get::<i64, _>(index) {
+        return serde_json::json!(v);
+    }
+    if let Ok(v) = row.try_get::<i32, _>(index) {
+        return serde_json::json!(v);
+    }
+    if let Ok(v) = row.try_get::<f64, _>(index) {
+        return serde_json::json!(v);
+    }
+    if let Ok(v) = row.try_get::<f32, _>(index) {
+        return serde_json::json!(v);
+    }
+    if let Ok(v) = row.try_get::<bool, _>(index) {
+        return serde_json::json!(v);
+    }
+    if let Ok(v) = row.try_get::<chrono::NaiveDateTime, _>(index) {
+        return serde_json::Value::String(v.to_string());
+    }
+    serde_json::Value::Null
 }
 
 /// 从文本中提取 SQL 语句
@@ -1550,6 +1615,12 @@ async fn create_metric_handler(
         metric = metric.with_dimensions(dims);
     }
 
+    {
+        let mut store = METRICS_STORE.write()
+            .map_err(|_| AppError::internal("无法写入指标存储".to_string()))?;
+        store.insert(metric.id, metric.clone());
+    }
+
     let response = serde_json::json!({
         "code": 0,
         "message": "创建成功",
@@ -1583,24 +1654,55 @@ async fn update_metric_handler(
     Path(id): Path<Uuid>,
     Json(payload): Json<UpdateMetricRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let updated_metric = {
+        let mut store = METRICS_STORE.write()
+            .map_err(|_| AppError::internal("无法写入指标存储".to_string()))?;
+        let metric = store.get_mut(&id)
+            .ok_or_else(|| AppError::NotFound("指标不存在".to_string()))?;
+
+        if let Some(name) = payload.name {
+            metric.name = name;
+        }
+        if let Some(description) = payload.description {
+            metric.description = Some(description);
+        }
+        if let Some(expression) = payload.expression {
+            metric.expression = expression;
+        }
+        if let Some(dimensions) = payload.dimensions {
+            metric.dimensions = Some(serde_json::json!(dimensions));
+        }
+        if let Some(unit) = payload.unit {
+            metric.unit = Some(unit);
+        }
+        if let Some(format_type) = payload.format_type {
+            metric.format_type = format_type;
+        }
+        metric.updated_at = chrono::Utc::now();
+        metric.clone()
+    };
+
     let response = serde_json::json!({
         "code": 0,
         "message": "更新成功",
-        "data": {
-            "id": id,
-            "updated_at": chrono::Utc::now()
-        }
+        "data": updated_metric
     });
-
-    let _ = payload;
 
     Ok(Json(response))
 }
 
 async fn delete_metric_handler(
     State(_state): State<Arc<AppState>>,
-    Path(_id): Path<Uuid>,
+    Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    {
+        let mut store = METRICS_STORE.write()
+            .map_err(|_| AppError::internal("无法写入指标存储".to_string()))?;
+        if store.remove(&id).is_none() {
+            return Err(AppError::NotFound("指标不存在".to_string()));
+        }
+    }
+
     Ok(Json(serde_json::json!({
         "code": 0,
         "message": "删除成功"
@@ -1626,7 +1728,8 @@ async fn execute_metric_handler(
     // 解析参数
     let connection_id = payload.get("connection_id")
         .and_then(|v| v.as_str())
-        .and_then(|s| Uuid::parse_str(s).ok());
+        .and_then(|s| Uuid::parse_str(s).ok())
+        .ok_or_else(|| AppError::ValidationError("connection_id is required".to_string()))?;
 
     let dimensions: std::collections::HashMap<String, String> = payload.get("dimensions")
         .and_then(|v| v.as_object())
@@ -1638,38 +1741,31 @@ async fn execute_metric_handler(
         .unwrap_or_default();
 
     // 执行指标表达式
-    let mut value: serde_json::Value = serde_json::Value::Null;
-    let mut error_message: Option<String> = None;
+    let config = get_connection_config(&state, connection_id).await?;
+    let pool_type = state.connection_manager.get_pool(&config).await?;
 
-    if let Some(conn_id) = connection_id {
-        if let Ok(config) = get_connection_config(&state, conn_id).await {
-            if let Ok(pool_type) = state.connection_manager.get_pool(&config).await {
-                // 替换维度参数
-                let mut sql = metric.expression.clone();
-                for (key, val) in &dimensions {
-                    sql = sql.replace(&format!("{{{}}}", key), val);
-                }
-
-                let result = match pool_type {
-                    ConnectionPool::Postgres(pg_pool) => {
-                        sqlx::query_as::<_, (serde_json::Value,)>(&sql)
-                            .fetch_one(&pg_pool)
-                            .await
-                    }
-                    ConnectionPool::Mysql(mysql_pool) => {
-                        sqlx::query_as::<_, (serde_json::Value,)>(&sql)
-                            .fetch_one(&mysql_pool)
-                            .await
-                    }
-                };
-
-                match result {
-                    Ok((v,)) => value = v,
-                    Err(e) => error_message = Some(format!("执行失败: {}", e)),
-                }
-            }
-        }
+    // 替换维度参数
+    let mut sql = metric.expression.clone();
+    for (key, val) in &dimensions {
+        sql = sql.replace(&format!("{{{}}}", key), val);
     }
+
+    let value = match pool_type {
+        ConnectionPool::Postgres(pg_pool) => {
+            let row: (serde_json::Value,) = sqlx::query_as(&sql)
+                .fetch_one(&pg_pool)
+                .await
+                .map_err(|e| AppError::database(format!("指标执行失败: {}", e)))?;
+            row.0
+        }
+        ConnectionPool::Mysql(mysql_pool) => {
+            let row: (serde_json::Value,) = sqlx::query_as(&sql)
+                .fetch_one(&mysql_pool)
+                .await
+                .map_err(|e| AppError::database(format!("指标执行失败: {}", e)))?;
+            row.0
+        }
+    };
 
     let duration_ms = start.elapsed().as_millis() as i64;
 
@@ -1693,7 +1789,7 @@ async fn execute_metric_handler(
 
     let response = serde_json::json!({
         "code": 0,
-        "message": if error_message.is_some() { "执行失败" } else { "Success" },
+        "message": "Success",
         "data": {
             "metric": {
                 "id": metric.id,
@@ -1706,7 +1802,7 @@ async fn execute_metric_handler(
             },
             "duration_ms": duration_ms,
             "executed_at": chrono::Utc::now(),
-            "error": error_message
+            "error": null
         }
     });
 
