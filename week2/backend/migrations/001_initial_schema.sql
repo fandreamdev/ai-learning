@@ -149,7 +149,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DE
 
 -- ==================== Schema 向量表（用于RAG检索）====================
 -- 注意: 需要安装 pgvector 扩展
--- CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS schema_embeddings (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
