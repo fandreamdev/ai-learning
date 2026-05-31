@@ -268,21 +268,23 @@ export default function ChatWorkspacePage() {
                       <div className="bg-gray-100 rounded-lg p-3">
                         <div className="flex items-center gap-2 text-xs text-gray-500 mb-2">
                           <Database size={14} />
-                          <span>生成的 SQL</span>
+                          <span>查询使用的 SQL</span>
                         </div>
                         <pre className="text-sm font-mono text-gray-800 overflow-x-auto">
                           {message.generated_sql}
                         </pre>
-                        <button
-                          className="mt-3 btn-primary text-sm py-1.5"
-                          disabled={executingMessageId === message.id}
-                          onClick={() => handleExecuteGeneratedSql(message)}
-                        >
-                          {executingMessageId === message.id ? '执行中...' : '执行查询'}
-                        </button>
+                        {!message.execution_result && (
+                          <button
+                            className="mt-3 btn-primary text-sm py-1.5"
+                            disabled={executingMessageId === message.id}
+                            onClick={() => handleExecuteGeneratedSql(message)}
+                          >
+                            {executingMessageId === message.id ? '执行中...' : '重新执行查询'}
+                          </button>
+                        )}
                         {Boolean(message.execution_result) && (
                           <div className="mt-3 text-xs text-gray-600">
-                            查询完成：
+                            已自动执行：
                             {(message.execution_result as NlExecuteResponse).row_count} 行，
                             耗时 {(message.execution_result as NlExecuteResponse).duration_ms} ms
                           </div>

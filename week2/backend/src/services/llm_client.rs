@@ -74,6 +74,94 @@ impl LlmClient {
         self.parse_sql_response(&response)
     }
 
+    /// 根据执行错误修复 SQL
+    pub async fn repair_sql(
+        &self,
+        question: &str,
+        schema_context: Option<&str>,
+        dialect: &str,
+        failed_sql: &str,
+        error_message: &str,
+    ) -> AppResult<NlToSqlResult> {
+        let schema_info = schema_context
+            .map(|schema| format!("## 数据库 Schema 信息\n{}\n", schema))
+            .unwrap_or_default();
+        let prompt = format!(
+            r#"你是一个 SQL 修复专家。下面的 SQL 执行失败了，请根据用户问题、数据库方言、Schema 和错误信息修复 SQL。
+
+{schema_info}
+## 数据库方言
+{dialect}
+
+## 用户问题
+{question}
+
+## 执行失败的 SQL
+{failed_sql}
+
+## 错误信息
+{error_message}
+
+## 要求
+1. 只返回 SELECT 查询，不要生成 INSERT/UPDATE/DELETE
+2. 修复后的 SQL 必须符合给定数据库方言
+3. 严格只返回 JSON，不要输出 Markdown 或额外解释
+
+请按以下 JSON 格式返回：
+{{
+  "sql": "修复后的 SQL",
+  "explanation": "修复原因和查询逻辑的中文解释",
+  "confidence": 0.0-1.0 的置信度
+}}"#
+        );
+
+        let response = self.call_llm(&prompt, &self.config.openai.model).await?;
+        self.parse_nl_to_sql_response(&response)
+    }
+
+    /// Generate the final chat answer from the executed SQL result.
+    pub async fn answer_with_query_result(
+        &self,
+        question: &str,
+        schema_context: Option<&str>,
+        dialect: &str,
+        sql: &str,
+        execution_result: &serde_json::Value,
+    ) -> AppResult<String> {
+        let schema_info = schema_context
+            .map(|schema| format!("## Database schema\n{}\n", schema))
+            .unwrap_or_default();
+        let result_json = serde_json::to_string_pretty(execution_result)
+            .map_err(|e| AppError::internal(format!("Failed to serialize execution result: {}", e)))?;
+        let result_context = truncate_context(&result_json, 12000);
+        let prompt = format!(
+            r#"You are a data analysis assistant. Answer the user directly in Chinese based only on the SQL execution result.
+
+{schema_info}
+## Database dialect
+{dialect}
+
+## User question
+{question}
+
+## Executed SQL
+{sql}
+
+## SQL execution result
+{result_context}
+
+## Requirements
+1. Directly answer the user's question with the returned data.
+2. Do not only say that the query succeeded.
+3. If the result contains names, counts, statuses, or other values, summarize those values clearly.
+4. Do not invent data that is not in the execution result.
+5. Do not use Markdown tables.
+6. Return only the final answer text."#
+        );
+
+        self.call_llm(&prompt, &self.config.openai.model).await
+    }
+
     /// 生成数据洞察
     pub async fn generate_insight(&self, data_summary: &str) -> AppResult<String> {
         let prompt = format!(
@@ -313,6 +401,16 @@ Schema 信息：
 }
 
 /// SQL 生成响应
+fn truncate_context(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+
+    let mut truncated = text.chars().take(max_chars).collect::<String>();
+    truncated.push_str("\n...[truncated]");
+    truncated
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SqlGenerationResponse {
     pub sql: String,

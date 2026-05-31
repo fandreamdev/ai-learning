@@ -26,9 +26,9 @@ export default function MainLayout() {
   }
 
   return (
-    <div className="min-h-screen flex">
+    <div className="h-screen overflow-hidden flex">
       {/* 侧边栏 */}
-      <aside className="w-64 bg-gray-900 text-white flex flex-col">
+      <aside className="h-screen w-64 flex-shrink-0 bg-gray-900 text-white flex flex-col overflow-y-auto">
         <div className="p-4 border-b border-gray-700">
           <h1 className="text-xl font-bold">SmartQuery AI</h1>
           <p className="text-sm text-gray-400 mt-1">智能数据库查询</p>
@@ -80,7 +80,7 @@ export default function MainLayout() {
       </aside>
 
       {/* 主内容区 */}
-      <main className="flex-1 bg-gray-50">
+      <main className="h-screen min-w-0 flex-1 overflow-y-auto bg-gray-50">
         <Outlet />
       </main>
     </div>

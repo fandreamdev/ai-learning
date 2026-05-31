@@ -1390,6 +1390,7 @@ fn mask_result_rows(
                 .map(|(index, value)| {
                     columns
                         .get(index)
+                        .filter(|column| !is_metadata_identifier_column(&column.name))
                         .and_then(|column| masker.detect_field_type(&column.name))
                         .and_then(|field_type| {
                             value
@@ -1401,6 +1402,24 @@ fn mask_result_rows(
                 .collect()
         })
         .collect()
+}
+
+fn is_metadata_identifier_column(name: &str) -> bool {
+    let normalized = name
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_lowercase();
+
+    matches!(
+        normalized.as_str(),
+        "tablename"
+            | "columnname"
+            | "schemaname"
+            | "constraintname"
+            | "indexname"
+            | "databasename"
+    )
 }
 
 fn encode_connection_password(input: &str, state: &AppState) -> String {
@@ -2246,14 +2265,86 @@ async fn send_message_handler(
     let result = llm_client
         .convert_nl_to_sql(&question, schema_context.as_deref())
         .await?;
-    validate_select_sql(&state, &result.sql)?;
+    let mut final_sql = result.sql.clone();
+    let mut final_explanation = result.explanation.clone();
+    let mut execution_result = None;
+    let mut chart_config = None;
+    let mut answer_content = result.explanation.clone();
+
+    if let Some(connection_id) = payload.connection_id {
+        let config = get_connection_config_for_session(&state, connection_id, &session).await?;
+        let dialect = payload.dialect.as_deref().unwrap_or(config.db_type.as_str());
+
+        for attempt in 0..3 {
+            let attempt_result = match validate_select_sql(&state, &final_sql) {
+                Ok(()) => execute_chat_sql(&state, &session, connection_id, &config, &final_sql).await,
+                Err(e) => Err(e),
+            };
+
+            match attempt_result {
+                Ok((result_value, chart_value, _answer)) => {
+                    let final_answer = llm_client
+                        .answer_with_query_result(
+                            &payload.content,
+                            schema_context.as_deref(),
+                            dialect,
+                            &final_sql,
+                            &result_value,
+                        )
+                        .await?;
+                    execution_result = Some(result_value);
+                    chart_config = chart_value;
+                    answer_content = final_answer;
+                    break;
+                }
+                Err(error) => {
+                    if attempt >= 2 {
+                        answer_content = format!(
+                            "SQL 自动修复后仍执行失败：{}。请检查表结构或换一种问法。",
+                            error
+                        );
+                        break;
+                    }
+
+                    let failed_sql = final_sql.clone();
+                    let repaired = llm_client
+                        .repair_sql(
+                            &payload.content,
+                            schema_context.as_deref(),
+                            dialect,
+                            &failed_sql,
+                            &error.to_string(),
+                        )
+                        .await?;
+
+                    final_sql = repaired.sql;
+                    final_explanation = format!(
+                        "{}\n已根据第 {} 次执行错误自动修复并重试。",
+                        repaired.explanation,
+                        attempt + 1
+                    );
+                }
+            }
+        }
+    }
 
     let assistant_msg = Message::assistant_message(
         id,
-        result.explanation.clone(),
-        Some(result.sql),
-        Some(format!("置信度: {:.0}%", result.confidence * 100.0)),
+        answer_content,
+        Some(final_sql),
+        Some(format!(
+            "{}\n置信度: {:.0}%",
+            final_explanation,
+            result.confidence * 100.0
+        )),
     );
+    let mut assistant_msg = assistant_msg;
+    if let Some(result_value) = execution_result {
+        assistant_msg = assistant_msg.with_execution_result(result_value);
+    }
+    if let Some(config_value) = chart_config {
+        assistant_msg = assistant_msg.with_chart_config(config_value);
+    }
     let assistant_msg = repo.create_message(&assistant_msg).await?;
 
     // 更新对话时间
@@ -2269,6 +2360,178 @@ async fn send_message_handler(
     });
 
     Ok(Json(response))
+}
+
+async fn execute_chat_sql(
+    state: &Arc<AppState>,
+    session: &UserSession,
+    connection_id: Uuid,
+    config: &ConnectionConfig,
+    sql: &str,
+) -> AppResult<(serde_json::Value, Option<serde_json::Value>, String)> {
+    let pool = state.connection_manager.get_pool(config).await?;
+    let start = std::time::Instant::now();
+    let mut history = QueryHistory::new(Some(connection_id), session.user_id, sql.to_string());
+
+    let (columns, rows) = match sql_execute(state.as_ref(), &pool, sql, &config.db_type).await {
+        Ok(result) => result,
+        Err(e) => {
+            history.mark_failed(e.to_string());
+            let _ = query_repo(state).create(&history).await;
+            return Err(e);
+        }
+    };
+
+    let rows = mask_result_rows(&columns, rows);
+    let duration_ms = start.elapsed().as_millis() as i64;
+    let row_count = rows.len() as i64;
+
+    history.mark_success(duration_ms, row_count);
+    let history = query_repo(state).create(&history).await.unwrap_or(history);
+    write_audit(
+        state,
+        Some(session.user_id),
+        "conversation.sql_execute",
+        Some("query_history"),
+        Some(history.id.to_string()),
+        serde_json::json!({
+            "connection_id": connection_id,
+            "row_count": row_count,
+            "duration_ms": duration_ms
+        }),
+    )
+    .await;
+
+    let chart_config = ChartGenerator::new()
+        .recommend(&columns, &rows)
+        .ok()
+        .map(|recommendation| recommendation.chart_config.echarts_config);
+    let answer = build_chat_result_answer(&columns, &rows, duration_ms);
+
+    Ok((
+        serde_json::json!({
+            "query_id": history.id,
+            "columns": columns,
+            "rows": rows,
+            "row_count": row_count,
+            "duration_ms": duration_ms
+        }),
+        chart_config,
+        answer,
+    ))
+}
+
+fn build_chat_result_answer(
+    columns: &[ColumnMetadata],
+    rows: &[Vec<serde_json::Value>],
+    duration_ms: i64,
+) -> String {
+    if rows.is_empty() {
+        return format!("查询完成，没有返回数据，耗时 {} ms。", duration_ms);
+    }
+
+    let first_row = &rows[0];
+    if rows.len() == 1 && columns.len() == 1 {
+        let name = columns
+            .first()
+            .map(|column| column.name.as_str())
+            .unwrap_or("结果");
+        let value = first_row
+            .first()
+            .map(json_value_to_display)
+            .unwrap_or_else(|| "NULL".to_string());
+        return format!("查询结果：{} = {}。", name, value);
+    }
+
+    if rows.len() == 1 {
+        let pairs = first_row
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                let name = columns
+                    .get(index)
+                    .map(|column| column.name.as_str())
+                    .unwrap_or("字段");
+                format!("{} = {}", name, json_value_to_display(value))
+            })
+            .collect::<Vec<_>>()
+            .join("，");
+        return format!("查询结果：{}。", pairs);
+    }
+
+    if columns.len() == 1 {
+        let column_name = columns
+            .first()
+            .map(|column| natural_column_label(&column.name))
+            .unwrap_or_else(|| "结果".to_string());
+        let values = rows
+            .iter()
+            .filter_map(|row| row.first())
+            .map(json_value_to_display)
+            .collect::<Vec<_>>();
+        return format!(
+            "一共存在 {} 条记录，{}分别是{}。",
+            values.len(),
+            column_name,
+            join_display_values(&values)
+        );
+    }
+
+    let preview = rows
+        .iter()
+        .take(5)
+        .map(|row| {
+            row.iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    let name = columns
+                        .get(index)
+                        .map(|column| natural_column_label(&column.name))
+                        .unwrap_or_else(|| "字段".to_string());
+                    format!("{}为{}", name, json_value_to_display(value))
+                })
+                .collect::<Vec<_>>()
+                .join("，")
+        })
+        .collect::<Vec<_>>();
+
+    let suffix = if rows.len() > preview.len() {
+        format!("等共 {} 条记录", rows.len())
+    } else {
+        format!("共 {} 条记录", rows.len())
+    };
+
+    format!("查询到{}：{}。", suffix, preview.join("；"))
+}
+
+fn json_value_to_display(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => "NULL".to_string(),
+        serde_json::Value::String(text) => text.clone(),
+        _ => value.to_string(),
+    }
+}
+
+fn natural_column_label(name: &str) -> String {
+    match name.to_ascii_lowercase().as_str() {
+        "username" | "user_name" | "name" => "名字".to_string(),
+        "email" => "邮箱".to_string(),
+        "role" => "角色".to_string(),
+        "count" | "row_count" | "total" => "数量".to_string(),
+        _ => name.replace('_', " "),
+    }
+}
+
+fn join_display_values(values: &[String]) -> String {
+    match values.len() {
+        0 => "空".to_string(),
+        1 => values[0].clone(),
+        2 => format!("{}和{}", values[0], values[1]),
+        _ => {
+            let head = values[..values.len() - 1].join("、");
+            format!("{}和{}", head, values[values.len() - 1])
+        }
+    }
 }
 
 /// 从 PostgreSQL 行提取列和数据
