@@ -1,19 +1,57 @@
-import { useState, useCallback } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import Editor from '@monaco-editor/react'
 import { Play, Wand2, Database, Download } from 'lucide-react'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { api } from '@/api/client'
 import type { SqlExecuteResponse } from '@/types/api'
 
+interface SchemaTable {
+  table_name: string
+  table_schema: string
+  table_type: string
+  columns?: Array<{
+    name: string
+    data_type: string
+    nullable: boolean
+    comment?: string | null
+  }>
+}
+
 export default function SqlWorkspacePage() {
-  const { connections, currentConnectionId, setCurrentConnection } = useConnectionStore()
+  const { connections, currentConnectionId, setCurrentConnection, fetchConnections } = useConnectionStore()
 
   const [sql, setSql] = useState('SELECT * FROM users LIMIT 10;')
   const [result, setResult] = useState<SqlExecuteResponse | null>(null)
+  const [schemaTables, setSchemaTables] = useState<SchemaTable[]>([])
+  const [isSchemaLoading, setIsSchemaLoading] = useState(false)
   const [isExecuting, setIsExecuting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const currentConnection = connections.find((c) => c.id === currentConnectionId)
+
+  useEffect(() => {
+    if (connections.length === 0) {
+      fetchConnections().catch(() => undefined)
+    }
+  }, [connections.length, fetchConnections])
+
+  useEffect(() => {
+    if (!currentConnectionId) {
+      setSchemaTables([])
+      return
+    }
+
+    setIsSchemaLoading(true)
+    api
+      .get(`/connections/${currentConnectionId}/schema`)
+      .then((response) => {
+        setSchemaTables(response.data?.data?.tables ?? [])
+      })
+      .catch(() => {
+        setSchemaTables([])
+      })
+      .finally(() => setIsSchemaLoading(false))
+  }, [currentConnectionId])
 
   const handleExecute = useCallback(async () => {
     if (!currentConnectionId) {
@@ -56,6 +94,26 @@ export default function SqlWorkspacePage() {
       setError('SQL 格式化失败')
     }
   }, [currentConnection?.db_type, sql])
+
+  const handleExport = useCallback((format: 'csv' | 'json') => {
+    if (!result) return
+
+    const filename = `query-result-${new Date().toISOString().replace(/[:.]/g, '-')}.${format}`
+    const content =
+      format === 'json'
+        ? JSON.stringify({ columns: result.columns, rows: result.rows }, null, 2)
+        : toCsv(result)
+    const mime = format === 'json' ? 'application/json;charset=utf-8' : 'text/csv;charset=utf-8'
+    const blob = new Blob([content], { type: mime })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+  }, [result])
 
   return (
     <div className="h-full flex flex-col">
@@ -104,7 +162,7 @@ export default function SqlWorkspacePage() {
         {/* 左侧面板 */}
         <div className="w-64 bg-white border-r p-4 overflow-auto">
           <h3 className="text-sm font-medium text-gray-700 mb-3">数据库结构</h3>
-          <div className="space-y-2">
+          <div className="space-y-3">
             <div className="text-xs text-gray-500">
               {currentConnection ? (
                 <div className="space-y-2">
@@ -114,6 +172,33 @@ export default function SqlWorkspacePage() {
                   <div className="text-gray-400">
                     {currentConnection.database_name}
                   </div>
+                  {isSchemaLoading ? (
+                    <div className="text-gray-400">正在加载结构...</div>
+                  ) : (
+                    <div className="space-y-3">
+                      {schemaTables.map((table) => (
+                        <div key={`${table.table_schema}.${table.table_name}`} className="rounded border border-gray-100 p-2">
+                          <button
+                            className="font-mono text-xs text-gray-700 hover:text-primary-600"
+                            onClick={() => setSql((value) => `${value}\nSELECT * FROM ${table.table_schema}.${table.table_name} LIMIT 100;`)}
+                          >
+                            {table.table_schema}.{table.table_name}
+                          </button>
+                          <div className="mt-1 space-y-1">
+                            {(table.columns || []).slice(0, 8).map((column) => (
+                              <div key={column.name} className="flex justify-between gap-2 text-[11px]">
+                                <span className="truncate text-gray-600">{column.name}</span>
+                                <span className="shrink-0 text-gray-400">{column.data_type}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                      {schemaTables.length === 0 && (
+                        <div className="text-gray-400">暂无表结构</div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <p className="text-gray-400">请选择数据库连接</p>
@@ -151,9 +236,13 @@ export default function SqlWorkspacePage() {
                 <div className="flex items-center gap-4 text-xs text-gray-500">
                   <span>行数: {result.row_count}</span>
                   <span>耗时: {result.duration_ms}ms</span>
-                  <button className="flex items-center gap-1 hover:text-primary-600">
+                  <button onClick={() => handleExport('csv')} className="flex items-center gap-1 hover:text-primary-600">
                     <Download size={14} />
-                    导出
+                    CSV
+                  </button>
+                  <button onClick={() => handleExport('json')} className="flex items-center gap-1 hover:text-primary-600">
+                    <Download size={14} />
+                    JSON
                   </button>
                 </div>
               )}
@@ -199,4 +288,18 @@ export default function SqlWorkspacePage() {
       </div>
     </div>
   )
+}
+
+function toCsv(result: SqlExecuteResponse) {
+  const escapeCell = (value: unknown) => {
+    const text = String(value ?? '')
+    if (/[",\r\n]/.test(text)) {
+      return `"${text.replace(/"/g, '""')}"`
+    }
+    return text
+  }
+
+  const header = result.columns.map((column) => escapeCell(column.name)).join(',')
+  const rows = result.rows.map((row) => row.map(escapeCell).join(','))
+  return [header, ...rows].join('\r\n')
 }

@@ -1,46 +1,52 @@
-import { useMemo, useState } from 'react'
-import { Activity, Search } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Activity, RefreshCw, Search } from 'lucide-react'
+import { api } from '@/api/client'
 
 interface AuditEntry {
   id: string
-  actor: string
+  user_id?: string | null
+  username?: string | null
   action: string
-  target: string
-  status: 'success' | 'failed'
-  createdAt: string
+  resource_type?: string | null
+  resource_id?: string | null
+  details?: unknown
+  ip_address?: string | null
+  created_at: string
 }
-
-const sampleLogs: AuditEntry[] = [
-  {
-    id: '1',
-    actor: 'admin',
-    action: '用户登录',
-    target: 'SmartQuery AI',
-    status: 'success',
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: '2',
-    actor: 'analyst',
-    action: '执行 SQL',
-    target: 'sales.orders',
-    status: 'success',
-    createdAt: new Date(Date.now() - 3600_000).toISOString(),
-  },
-]
 
 export function AuditLog() {
   const [query, setQuery] = useState('')
+  const [logs, setLogs] = useState<AuditEntry[]>([])
+  const [loading, setLoading] = useState(false)
 
-  const logs = useMemo(() => {
-    const keyword = query.trim().toLowerCase()
-    if (!keyword) return sampleLogs
-    return sampleLogs.filter((log) =>
-      [log.actor, log.action, log.target, log.status].some((value) =>
-        value.toLowerCase().includes(keyword)
-      )
-    )
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      fetchLogs(query)
+    }, 250)
+
+    return () => window.clearTimeout(timer)
   }, [query])
+
+  const fetchLogs = async (keyword: string) => {
+    setLoading(true)
+    try {
+      const response = await api.get('/audit-logs', {
+        params: {
+          page: 1,
+          page_size: 100,
+          query: keyword.trim() || undefined,
+        },
+      })
+      setLogs(response.data?.data?.items ?? [])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const getActor = (log: AuditEntry) => log.username || log.user_id || 'system'
+
+  const getTarget = (log: AuditEntry) =>
+    [log.resource_type, log.resource_id].filter(Boolean).join(':') || '-'
 
   return (
     <div className="p-6">
@@ -62,39 +68,36 @@ export function AuditLog() {
       </div>
 
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-        <table className="w-full text-sm">
+        {loading ? (
+          <div className="flex items-center justify-center gap-2 px-4 py-10 text-gray-500">
+            <RefreshCw size={18} className="animate-spin" />
+            <span>正在加载审计日志</span>
+          </div>
+        ) : (
+          <table className="w-full text-sm">
           <thead className="bg-gray-50 text-left text-gray-600">
             <tr>
               <th className="px-4 py-3 font-medium">时间</th>
               <th className="px-4 py-3 font-medium">操作者</th>
               <th className="px-4 py-3 font-medium">动作</th>
               <th className="px-4 py-3 font-medium">对象</th>
-              <th className="px-4 py-3 font-medium">状态</th>
+              <th className="px-4 py-3 font-medium">IP</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {logs.map((log) => (
               <tr key={log.id} className="hover:bg-gray-50">
-                <td className="px-4 py-3 text-gray-500">{new Date(log.createdAt).toLocaleString()}</td>
-                <td className="px-4 py-3 text-gray-800">{log.actor}</td>
+                <td className="px-4 py-3 text-gray-500">{new Date(log.created_at).toLocaleString()}</td>
+                <td className="px-4 py-3 text-gray-800">{getActor(log)}</td>
                 <td className="px-4 py-3 text-gray-800">{log.action}</td>
-                <td className="px-4 py-3 font-mono text-xs text-gray-600">{log.target}</td>
-                <td className="px-4 py-3">
-                  <span
-                    className={
-                      log.status === 'success'
-                        ? 'rounded bg-green-100 px-2 py-1 text-xs text-green-700'
-                        : 'rounded bg-red-100 px-2 py-1 text-xs text-red-700'
-                    }
-                  >
-                    {log.status === 'success' ? '成功' : '失败'}
-                  </span>
-                </td>
+                <td className="px-4 py-3 font-mono text-xs text-gray-600">{getTarget(log)}</td>
+                <td className="px-4 py-3 text-gray-500">{log.ip_address || '-'}</td>
               </tr>
             ))}
           </tbody>
         </table>
-        {logs.length === 0 && (
+        )}
+        {!loading && logs.length === 0 && (
           <div className="flex items-center justify-center gap-2 px-4 py-10 text-gray-500">
             <Activity size={18} />
             <span>没有匹配的审计日志</span>

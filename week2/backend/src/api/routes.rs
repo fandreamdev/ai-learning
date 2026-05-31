@@ -22,13 +22,13 @@ use crate::middleware::auth::{
 };
 use crate::models::{
     ChangePasswordRequest, ColumnMetadata, ConnectionPublic, Conversation, CreateConnectionRequest,
-    CreateConversationRequest, CreateMetricRequest, CreateUserRequest, DatabaseConnection,
+    BatchSemanticRequest, CreateConversationRequest, CreateMetricRequest, CreateSemanticRequest, CreateUserRequest, DatabaseConnection,
     DatabaseType, FormatType, LoginRequest, Message, MessageRole, Metric, NlExecuteRequest, NlToSqlRequest,
     QueryHistory, QueryHistoryItem, SendMessageRequest, SqlExecuteRequest, SqlFormatRequest,
-    UpdateConnectionRequest, UpdateMetricRequest,
+    SemanticDefinition, UpdateConnectionRequest, UpdateMetricRequest, UpdateSemanticRequest,
     UpdateUserRequest, User, UserPublic, UserRole, UserSession,
 };
-use crate::repositories::{AuditRepo, ConnectionRepo, ConversationRepo, MetricRepo, QueryRepo, UserRepo};
+use crate::repositories::{AuditRepo, ConnectionRepo, ConversationRepo, MetricRepo, QueryRepo, SemanticRepo, UserRepo};
 use crate::services::chart_generator::ChartGenerator;
 use crate::services::connection_manager::{ConnectionConfig, ConnectionPool};
 use crate::services::data_masker::DataMasker;
@@ -97,6 +97,25 @@ struct UserListRequest {
     page_size: i32,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct AuditLogListRequest {
+    #[serde(default = "default_page")]
+    page: i32,
+    #[serde(default = "default_page_size")]
+    page_size: i32,
+    query: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SemanticListRequest {
+    connection_id: Option<Uuid>,
+    #[serde(default = "default_page")]
+    page: i32,
+    #[serde(default = "default_page_size")]
+    page_size: i32,
+    query: Option<String>,
+}
+
 fn default_page() -> i32 { 1 }
 fn default_page_size() -> i32 { 20 }
 
@@ -111,6 +130,8 @@ pub fn routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .nest("/conversations", conversation_routes())
         .nest("/charts", chart_routes())
         .nest("/metrics", metric_routes())
+        .nest("/audit-logs", audit_routes())
+        .nest("/semantics", semantic_routes())
         .route_layer(middleware::from_fn_with_state(state, auth_middleware));
 
     let api = Router::new()
@@ -217,6 +238,23 @@ fn sql_routes() -> Router<Arc<AppState>> {
         .route_layer(middleware::from_fn(require_sql_mode))
 }
 
+fn audit_routes() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/", get(list_audit_logs_handler))
+        .route_layer(middleware::from_fn(admin_only))
+}
+
+fn semantic_routes() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/", get(list_semantics_handler))
+        .route("/", post(create_semantic_handler))
+        .route("/batch", post(batch_semantics_handler))
+        .route("/stats", get(get_semantic_stats_handler))
+        .route("/{id}", put(update_semantic_handler))
+        .route("/{id}", delete(delete_semantic_handler))
+        .route_layer(middleware::from_fn(require_sql_mode))
+}
+
 // ==================== 辅助函数 ====================
 
 /// 从请求中提取用户 ID
@@ -262,6 +300,10 @@ fn conversation_repo(state: &AppState) -> ConversationRepo {
 /// 创建指标仓储
 fn metric_repo(state: &AppState) -> MetricRepo {
     MetricRepo::new(state.db.clone())
+}
+
+fn semantic_repo(state: &AppState) -> SemanticRepo {
+    SemanticRepo::new(state.db.clone())
 }
 
 fn audit_repo(state: &AppState) -> AuditRepo {
@@ -624,6 +666,229 @@ async fn change_password_handler(
     Ok(Json(serde_json::json!({
         "code": 0,
         "message": "密码修改成功"
+    })))
+}
+
+// ==================== 审计日志处理器 ====================
+
+async fn list_audit_logs_handler(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<AuditLogListRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let page = params.page.max(1);
+    let page_size = params.page_size.max(1).min(100);
+    let (items, total) = audit_repo(&state)
+        .list(page, page_size, params.query.as_deref())
+        .await?;
+
+    Ok(Json(serde_json::json!({
+        "code": 0,
+        "message": "Success",
+        "data": {
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size
+        }
+    })))
+}
+
+// ==================== 语义层处理器 ====================
+
+async fn list_semantics_handler(
+    State(state): State<Arc<AppState>>,
+    Extension(session): Extension<UserSession>,
+    Query(params): Query<SemanticListRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if let Some(connection_id) = params.connection_id {
+        let _ = get_connection_config_for_session(&state, connection_id, &session).await?;
+    }
+
+    let page = params.page.max(1);
+    let page_size = params.page_size.max(1).min(100);
+    let (items, total) = semantic_repo(&state)
+        .list(params.connection_id, page, page_size, params.query.as_deref())
+        .await?;
+
+    Ok(Json(serde_json::json!({
+        "code": 0,
+        "message": "Success",
+        "data": {
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size
+        }
+    })))
+}
+
+async fn create_semantic_handler(
+    State(state): State<Arc<AppState>>,
+    Extension(session): Extension<UserSession>,
+    Json(payload): Json<CreateSemanticRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    payload
+        .validate()
+        .map_err(|e| AppError::validation(format!("语义定义参数校验失败: {}", e)))?;
+    let _ = get_connection_config_for_session(&state, payload.connection_id, &session).await?;
+
+    let mut semantic = SemanticDefinition::new(
+        payload.connection_id,
+        payload.table_name,
+        payload.column_name,
+        payload.business_name,
+        payload.business_description,
+    );
+    semantic.synonyms = payload.synonyms.map(|synonyms| serde_json::json!(synonyms));
+
+    let semantic = semantic_repo(&state).create(&semantic).await?;
+    write_audit(
+        &state,
+        Some(session.user_id),
+        "semantic.create",
+        Some("semantic"),
+        Some(semantic.id.to_string()),
+        serde_json::json!({"connection_id": semantic.connection_id, "name": semantic.full_name()}),
+    )
+    .await;
+
+    Ok(Json(serde_json::json!({
+        "code": 0,
+        "message": "创建成功",
+        "data": semantic
+    })))
+}
+
+async fn update_semantic_handler(
+    State(state): State<Arc<AppState>>,
+    Extension(session): Extension<UserSession>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<UpdateSemanticRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    payload
+        .validate()
+        .map_err(|e| AppError::validation(format!("语义定义参数校验失败: {}", e)))?;
+
+    let repo = semantic_repo(&state);
+    let mut semantic = repo
+        .find_by_id(id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("语义定义不存在".to_string()))?;
+    let _ = get_connection_config_for_session(&state, semantic.connection_id, &session).await?;
+
+    if let Some(business_name) = payload.business_name {
+        semantic.business_name = business_name;
+    }
+    if payload.business_description.is_some() {
+        semantic.business_description = payload.business_description;
+    }
+    if let Some(synonyms) = payload.synonyms {
+        semantic.synonyms = Some(serde_json::json!(synonyms));
+    }
+    if let Some(is_active) = payload.is_active {
+        semantic.is_active = is_active;
+    }
+
+    let semantic = repo.update(&semantic).await?;
+    write_audit(
+        &state,
+        Some(session.user_id),
+        "semantic.update",
+        Some("semantic"),
+        Some(semantic.id.to_string()),
+        serde_json::json!({"connection_id": semantic.connection_id, "name": semantic.full_name()}),
+    )
+    .await;
+
+    Ok(Json(serde_json::json!({
+        "code": 0,
+        "message": "更新成功",
+        "data": semantic
+    })))
+}
+
+async fn delete_semantic_handler(
+    State(state): State<Arc<AppState>>,
+    Extension(session): Extension<UserSession>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let repo = semantic_repo(&state);
+    let semantic = repo
+        .find_by_id(id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("语义定义不存在".to_string()))?;
+    let _ = get_connection_config_for_session(&state, semantic.connection_id, &session).await?;
+
+    repo.delete(id).await?;
+    write_audit(
+        &state,
+        Some(session.user_id),
+        "semantic.delete",
+        Some("semantic"),
+        Some(id.to_string()),
+        serde_json::json!({"connection_id": semantic.connection_id, "name": semantic.full_name()}),
+    )
+    .await;
+
+    Ok(Json(serde_json::json!({
+        "code": 0,
+        "message": "删除成功"
+    })))
+}
+
+async fn batch_semantics_handler(
+    State(state): State<Arc<AppState>>,
+    Extension(session): Extension<UserSession>,
+    Json(payload): Json<BatchSemanticRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    payload
+        .validate()
+        .map_err(|e| AppError::validation(format!("批量语义参数校验失败: {}", e)))?;
+    let _ = get_connection_config_for_session(&state, payload.connection_id, &session).await?;
+
+    let repo = semantic_repo(&state);
+    let mut items = Vec::with_capacity(payload.definitions.len());
+    for definition in payload.definitions {
+        let mut semantic = SemanticDefinition::new(
+            payload.connection_id,
+            definition.table_name,
+            definition.column_name,
+            definition.business_name,
+            definition.business_description,
+        );
+        semantic.synonyms = definition.synonyms.map(|synonyms| serde_json::json!(synonyms));
+        items.push(repo.create(&semantic).await?);
+    }
+
+    write_audit(
+        &state,
+        Some(session.user_id),
+        "semantic.batch_create",
+        Some("semantic"),
+        Some(payload.connection_id.to_string()),
+        serde_json::json!({"count": items.len()}),
+    )
+    .await;
+
+    Ok(Json(serde_json::json!({
+        "code": 0,
+        "message": "批量创建成功",
+        "data": {
+            "items": items,
+            "total": items.len()
+        }
+    })))
+}
+
+async fn get_semantic_stats_handler(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let stats = semantic_repo(&state).stats().await?;
+
+    Ok(Json(serde_json::json!({
+        "code": 0,
+        "message": "Success",
+        "data": stats
     })))
 }
 
@@ -1370,6 +1635,7 @@ async fn build_execution_plan(
     };
 
     let duration_ms = start.elapsed().as_millis() as i64;
+    let (warnings, suggestions) = analyze_execution_plan_text(&result);
 
     Ok(serde_json::json!({
         "plan_type": "SELECT",
@@ -1377,10 +1643,49 @@ async fn build_execution_plan(
         "estimated_rows": null,
         "actual_rows": null,
         "duration_ms": duration_ms,
+        "warnings": warnings,
+        "suggestions": suggestions,
         "details": {
             "raw": result
         }
     }))
+}
+
+fn analyze_execution_plan_text(plan: &str) -> (Vec<String>, Vec<String>) {
+    let lower = plan.to_ascii_lowercase();
+    let mut warnings = Vec::new();
+    let mut suggestions = Vec::new();
+
+    if lower.contains("seq scan")
+        || lower.contains("table scan")
+        || lower.contains("full scan")
+        || lower.contains("all\t")
+        || lower.contains("\"all\"")
+    {
+        warnings.push("执行计划可能包含全表扫描".to_string());
+        suggestions.push("检查 WHERE/JOIN 字段是否有合适索引，必要时缩小查询范围".to_string());
+    }
+
+    if lower.contains("filesort") || lower.contains("using temporary") || lower.contains("temporary") {
+        warnings.push("执行计划可能使用临时表或额外排序".to_string());
+        suggestions.push("检查 ORDER BY/GROUP BY 字段顺序，考虑建立联合索引".to_string());
+    }
+
+    if lower.contains("nested loop") {
+        warnings.push("执行计划包含嵌套循环连接".to_string());
+        suggestions.push("确认 JOIN 条件字段有索引，并关注大表连接顺序".to_string());
+    }
+
+    if lower.contains("cross join") {
+        warnings.push("执行计划包含笛卡尔连接风险".to_string());
+        suggestions.push("补充明确 JOIN 条件，避免结果集爆炸".to_string());
+    }
+
+    if warnings.is_empty() {
+        suggestions.push("未发现明显高风险执行计划特征".to_string());
+    }
+
+    (warnings, suggestions)
 }
 
 async fn preview_data_handler(
@@ -1853,6 +2158,36 @@ async fn send_message_handler(
     let user_msg = Message::user_message(id, payload.content.clone());
     let user_msg = repo.create_message(&user_msg).await?;
 
+    let schema_context = if let Some(connection_id) = payload.connection_id {
+        let config = get_connection_config_for_session(&state, connection_id, &session).await?;
+        let mut table_info = Vec::new();
+        if let Ok(tables) = state.connection_manager.get_schema(&config).await {
+            for table in tables {
+                let columns = state
+                    .connection_manager
+                    .get_table_columns(&config, &table.table_schema, &table.table_name)
+                    .await
+                    .unwrap_or_default();
+                let column_info = columns
+                    .iter()
+                    .map(|column| format!("{} {}", column.name, column.data_type))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                table_info.push(format!(
+                    "{}.{} columns: [{}]",
+                    table.table_schema, table.table_name, column_info
+                ));
+            }
+        }
+        if table_info.is_empty() {
+            None
+        } else {
+            Some(table_info.join("\n"))
+        }
+    } else {
+        None
+    };
+
     // 获取对话历史用于上下文
     let messages = repo.list_messages(id).await?;
     let history_context: String = messages
@@ -1862,26 +2197,28 @@ async fn send_message_handler(
         .collect::<Vec<_>>()
         .join("\n");
 
-    // 调用 LLM 生成回复
     let llm_client = &state.llm_client;
-    let prompt = format!(
-        "你是一个专业的 SQL 助手。用户正在与你对话。\n\n历史对话:\n{}\n\n当前用户消息: {}",
-        history_context, payload.content
+    let question = format!(
+        "目标数据库方言: {}\n历史对话:\n{}\n当前问题: {}",
+        payload.dialect.as_deref().unwrap_or("mysql"),
+        history_context,
+        payload.content
     );
+    let result = llm_client
+        .convert_nl_to_sql(&question, schema_context.as_deref())
+        .await?;
+    validate_select_sql(&state, &result.sql)?;
 
-    let response = llm_client.call_llm(&prompt, "gpt-4o-mini").await?;
-    let sql_result = extract_sql_from_text(&response);
-    let explanation = if sql_result.is_some() {
-        Some("已根据您的问题生成 SQL 查询".to_string())
-    } else {
-        Some(response.clone())
-    };
-
-    let assistant_msg = Message::assistant_message(id, response, sql_result, explanation);
+    let assistant_msg = Message::assistant_message(
+        id,
+        result.explanation.clone(),
+        Some(result.sql),
+        Some(format!("置信度: {:.0}%", result.confidence * 100.0)),
+    );
     let assistant_msg = repo.create_message(&assistant_msg).await?;
 
     // 更新对话时间
-    let _ = repo.update_title(id, "对话已更新");
+    let _ = repo.update_title(id, &payload.content.chars().take(40).collect::<String>()).await;
 
     let response = serde_json::json!({
         "code": 0,
@@ -2138,38 +2475,6 @@ fn sqlite_value_to_json(row: &sqlx::sqlite::SqliteRow, index: usize) -> serde_js
         return serde_json::json!(v);
     }
     serde_json::Value::Null
-}
-
-/// 从文本中提取 SQL 语句
-fn extract_sql_from_text(text: &str) -> Option<String> {
-    // 尝试提取 ```sql ... ``` 块
-    let re = regex::Regex::new(r"```sql\s*([\s\S]*?)\s*```").ok()?;
-    if let Some(caps) = re.captures(text) {
-        if let Some(sql_match) = caps.get(1) {
-            return Some(sql_match.as_str().trim().to_string());
-        }
-    }
-
-    // 尝试提取 ``` ... ``` 块
-    let re = regex::Regex::new(r"```\s*([\s\S]*?)\s*```").ok()?;
-    if let Some(caps) = re.captures(text) {
-        if let Some(code_match) = caps.get(1) {
-            let content = code_match.as_str().trim();
-            if content.to_uppercase().contains("SELECT") {
-                return Some(content.to_string());
-            }
-        }
-    }
-
-    // 尝试提取 SELECT ... 结尾的语句
-    let re = regex::Regex::new(r"(?i)(SELECT[\s\S]+?)(?:\n\n|$)").ok()?;
-    if let Some(caps) = re.captures(text) {
-        if let Some(sql_match) = caps.get(1) {
-            return Some(sql_match.as_str().trim().to_string());
-        }
-    }
-
-    None
 }
 
 // ==================== 图表处理器 ====================

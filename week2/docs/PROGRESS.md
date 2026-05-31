@@ -110,10 +110,16 @@
 | ClickHouse 最小链路 | ✅ 已完成 | 已通过 ClickHouse HTTP 接口支持连接测试、Schema 获取、SELECT 执行、预览、EXPLAIN、指标执行和 SQL 格式化 |
 | PNG 图表导出 | ✅ 已完成 | `/charts/export` 已支持写入前端传入的 PNG data URL/base64 |
 | 运行时 Mock 清理 | ✅ 已完成 | 未接入备用对话模块不再在 LLM 失败时返回模拟 SQL；运行时源码未发现 mock/模拟返回 |
+| 审计日志查询 API | ✅ 已完成 | 已新增 `/api/v1/audit-logs` 管理员分页查询和搜索，并接入前端审计页 |
+| 语义层 API | ✅ 已完成 | 已新增 `/api/v1/semantics` 列表、创建、更新、删除、批量创建和统计接口 |
+| SQL 工作区 Schema | ✅ 已完成 | SQL 页面选择连接后已调用 `/connections/{id}/schema` 展示真实表结构 |
+| SQL 结果导出 | ✅ 已完成 | SQL 页面已支持当前结果 CSV/JSON 浏览器导出 |
+| SQL 优化建议 | ✅ 已完成 | `/sql/explain` 已返回基础 `warnings` 和 `suggestions` |
 | 通用组件 | ✅ 已完成 | 已创建 `Common/Button`、`Common/Modal`、`Common/Table` 并通过构建 |
 | SQL 编辑器封装 | ✅ 已完成 | 已创建 `components/Editor/SqlEditor.tsx` 并通过构建 |
 | 角色管理页面 | ✅ 已完成 | 已创建 `pages/Admin/RoleManagement.tsx` 并通过构建 |
-| 审计日志页面 | ✅ 已完成 | 已创建 `pages/Admin/AuditLog.tsx` 并通过构建 |
+| 审计日志页面 | ✅ 已完成 | `pages/Admin/AuditLog.tsx` 已接入真实 `/audit-logs` API |
+| 语义层页面 | ✅ 已完成 | 已新增 `pages/Admin/SemanticManagement.tsx` 并接入语义层 API |
 
 ### 部署与外部服务
 
@@ -132,11 +138,11 @@
 | 阶段 | 状态 | 说明 |
 |------|------|------|
 | Phase 1: 基础搭建 | ✅ 已完成 | 后端基础、模型、仓储、服务、前端基础均已创建；后端编译通过 |
-| Phase 2: SQL 模式 | ✅ 已完成 | SQL 执行、格式化、历史、EXPLAIN、预览已接入主路由 |
+| Phase 2: SQL 模式 | ✅ 已完成 | SQL 执行、格式化、历史、EXPLAIN、预览、Schema 展示、CSV/JSON 导出已接入 |
 | Phase 3: NL 模式 | ✅ 已完成 | NL 转 SQL 调用 LLM，NL execute 已执行真实 SQL |
 | Phase 4: 图表功能 | ✅ 已完成 | 主路由已接入图表推荐、生成、导出 |
-| Phase 5: 语义层/指标 | ✅ 已完成 | 指标 API 创建、列表、详情、更新、删除、执行、血缘已接入主路由 |
-| Phase 6: 权限系统 | ✅ 已完成 | 后端用户、认证、refresh token 黑名单校验完成；前端角色管理和审计日志页面已创建 |
+| Phase 5: 语义层/指标 | ✅ 已完成 | 语义定义 API 和页面、指标 API 创建、列表、详情、更新、删除、执行、血缘已接入 |
+| Phase 6: 权限系统 | ✅ 已完成 | 后端用户、认证、refresh token 黑名单、审计写入和审计查询页面已完成 |
 | Phase 7: 生产部署 | ❌ 未完成 | Docker、K8s、监控均未完成 |
 | Phase 8: 连接管理 | ✅ 已完成 | 连接 CRUD、测试连接、Schema 获取已接入主路由 |
 | Phase 9: 对话管理 | ✅ 已完成 | 对话 CRUD、消息列表、发送消息并调用 LLM 已接入主路由 |

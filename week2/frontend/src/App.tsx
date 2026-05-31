@@ -5,6 +5,10 @@ import LoginPage from './pages/LoginPage'
 import SqlWorkspacePage from './pages/SqlWorkspacePage'
 import ChatWorkspacePage from './pages/ChatWorkspacePage'
 import MainLayout from './components/Layout/MainLayout'
+import UserManagement from './pages/Admin/UserManagement'
+import RoleManagement from './pages/Admin/RoleManagement'
+import AuditLog from './pages/Admin/AuditLog'
+import SemanticManagement from './pages/Admin/SemanticManagement'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated)
@@ -33,6 +37,10 @@ function App() {
           <Route index element={<Navigate to="/sql" replace />} />
           <Route path="sql" element={<SqlWorkspacePage />} />
           <Route path="chat" element={<ChatWorkspacePage />} />
+          <Route path="admin/users" element={<UserManagement />} />
+          <Route path="admin/roles" element={<RoleManagement />} />
+          <Route path="admin/audit" element={<AuditLog />} />
+          <Route path="admin/semantics" element={<SemanticManagement />} />
         </Route>
       </Routes>
 

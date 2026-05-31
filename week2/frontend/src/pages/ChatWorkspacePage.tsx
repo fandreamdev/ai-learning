@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
-import { Send, Database, MessageSquare } from 'lucide-react'
+import { Download, Plus, Send, Database, MessageSquare } from 'lucide-react'
 import { useChatStore } from '@/stores/chatStore'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { api } from '@/api/client'
-import type { Message, NlConvertResponse } from '@/types/api'
+import type { Conversation, Message } from '@/types/api'
 
 interface NlExecuteResponse {
   columns: Array<{ name: string; data_type: string; ordinal: number }>
@@ -15,7 +15,18 @@ interface NlExecuteResponse {
 }
 
 export default function ChatWorkspacePage() {
-  const { messages, addMessage, updateMessage, isLoading, setLoading } = useChatStore()
+  const {
+    conversations,
+    currentConversationId,
+    messages,
+    setConversations,
+    setCurrentConversation,
+    setMessages,
+    addMessage,
+    updateMessage,
+    isLoading,
+    setLoading,
+  } = useChatStore()
   const { connections, currentConnectionId } = useConnectionStore()
 
   const [input, setInput] = useState('')
@@ -30,12 +41,51 @@ export default function ChatWorkspacePage() {
     scrollToBottom()
   }, [messages])
 
+  useEffect(() => {
+    fetchConversations()
+  }, [])
+
+  useEffect(() => {
+    if (currentConversationId) {
+      fetchMessages(currentConversationId)
+    }
+  }, [currentConversationId])
+
+  const fetchConversations = async () => {
+    const response = await api.get('/conversations')
+    const items: Conversation[] = response.data?.data?.items ?? []
+    setConversations(items)
+    if (!currentConversationId && items.length > 0) {
+      setCurrentConversation(items[0].id)
+    }
+  }
+
+  const fetchMessages = async (conversationId: string) => {
+    const response = await api.get(`/conversations/${conversationId}/messages`)
+    setMessages(response.data?.data?.items ?? [])
+  }
+
+  const createConversation = async () => {
+    const response = await api.post('/conversations', {
+      title: input.trim() ? input.trim().slice(0, 40) : '新对话',
+    })
+    const conversation: Conversation | undefined = response.data?.data
+    if (conversation) {
+      setConversations([conversation, ...conversations])
+      setCurrentConversation(conversation.id)
+      return conversation.id
+    }
+    return null
+  }
+
   const handleSend = async () => {
     if (!input.trim() || !currentConnectionId) return
+    const conversationId = currentConversationId || await createConversation()
+    if (!conversationId) return
 
     const userMessage: Message = {
       id: Date.now().toString(),
-      conversation_id: '',
+      conversation_id: conversationId,
       role: 'user',
       content: input,
       created_at: new Date().toISOString(),
@@ -47,31 +97,24 @@ export default function ChatWorkspacePage() {
 
     try {
       const currentConnection = connections.find((conn) => conn.id === currentConnectionId)
-      const response = await api.post('/nl/convert', {
+      const response = await api.post(`/conversations/${conversationId}/messages`, {
+        content: input,
         connection_id: currentConnectionId,
-        question: input,
         dialect: currentConnection?.db_type || 'mysql',
       })
 
       const data = response.data
 
       if (data.code === 0) {
-        const result: NlConvertResponse = data.data
-
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          conversation_id: '',
-          role: 'assistant',
-          content: result.explanation,
-          generated_sql: result.sql,
-          created_at: new Date().toISOString(),
+        const assistantMessage: Message | undefined = data.data?.assistant_message
+        if (assistantMessage) {
+          addMessage(assistantMessage)
         }
-
-        addMessage(assistantMessage)
+        fetchConversations()
       } else {
         const errorMessage: Message = {
           id: (Date.now() + 1).toString(),
-          conversation_id: '',
+          conversation_id: conversationId,
           role: 'assistant',
           content: data.message || '抱歉，发生了错误，请重试。',
           created_at: new Date().toISOString(),
@@ -81,7 +124,7 @@ export default function ChatWorkspacePage() {
     } catch {
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
-        conversation_id: '',
+        conversation_id: conversationId,
         role: 'assistant',
         content: '网络错误，请检查连接后重试。',
         created_at: new Date().toISOString(),
@@ -90,6 +133,22 @@ export default function ChatWorkspacePage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleExportConversation = () => {
+    const conversation = conversations.find((item) => item.id === currentConversationId)
+    const filename = `${conversation?.title || 'conversation'}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
+    const blob = new Blob([
+      JSON.stringify({ conversation, messages }, null, 2),
+    ], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
   }
 
   const handleExecuteGeneratedSql = async (message: Message) => {
@@ -139,14 +198,40 @@ export default function ChatWorkspacePage() {
           <MessageSquare size={20} className="text-primary-600" />
           <span className="font-medium text-gray-900">对话模式</span>
         </div>
-        {!currentConnectionId && (
-          <span className="text-sm text-amber-600">
-            请先在 SQL 模式选择数据库连接
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {!currentConnectionId && (
+            <span className="text-sm text-amber-600">
+              请先在 SQL 模式选择数据库连接
+            </span>
+          )}
+          <button onClick={createConversation} className="btn-secondary flex items-center gap-1 py-1.5 text-sm">
+            <Plus size={16} />
+            新对话
+          </button>
+          <button onClick={handleExportConversation} disabled={messages.length === 0} className="btn-secondary flex items-center gap-1 py-1.5 text-sm">
+            <Download size={16} />
+            导出
+          </button>
+        </div>
       </div>
 
       {/* 消息列表 */}
+      <div className="flex border-b bg-white px-4 py-2 gap-2 overflow-x-auto">
+        {conversations.map((conversation) => (
+          <button
+            key={conversation.id}
+            onClick={() => setCurrentConversation(conversation.id)}
+            className={`shrink-0 rounded px-3 py-1.5 text-sm ${
+              conversation.id === currentConversationId
+                ? 'bg-primary-600 text-white'
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            }`}
+          >
+            {conversation.title || '未命名对话'}
+          </button>
+        ))}
+      </div>
+
       <div className="flex-1 overflow-auto p-4 space-y-4">
         {messages.length === 0 ? (
           <div className="h-full flex items-center justify-center">

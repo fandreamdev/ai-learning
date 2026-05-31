@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { Database, MessageSquare, LogOut } from 'lucide-react'
+import { Activity, BookOpen, Database, LogOut, MessageSquare, Shield, Users } from 'lucide-react'
 import { useAuthStore } from '@/stores/authStore'
 
 export default function MainLayout() {
@@ -10,6 +10,15 @@ export default function MainLayout() {
     { path: '/sql', label: 'SQL 模式', icon: Database },
     { path: '/chat', label: '对话模式', icon: MessageSquare },
   ]
+  const adminItems = user?.role === 'admin'
+    ? [
+        { path: '/admin/users', label: '用户管理', icon: Users },
+        { path: '/admin/roles', label: '角色管理', icon: Shield },
+        { path: '/admin/semantics', label: '语义层', icon: BookOpen },
+        { path: '/admin/audit', label: '审计日志', icon: Activity },
+      ]
+    : []
+  const allNavItems = [...navItems, ...adminItems]
 
   const handleLogout = () => {
     logout()
@@ -26,7 +35,7 @@ export default function MainLayout() {
         </div>
 
         <nav className="flex-1 p-4 space-y-2">
-          {navItems.map((item) => {
+          {allNavItems.map((item) => {
             const Icon = item.icon
             const isActive = location.pathname === item.path
 

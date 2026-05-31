@@ -179,6 +179,12 @@ pub struct UpdateConversationRequest {
 pub struct SendMessageRequest {
     #[validate(length(min = 1, message = "消息内容不能为空"))]
     pub content: String,
+
+    #[serde(default)]
+    pub connection_id: Option<Uuid>,
+
+    #[serde(default)]
+    pub dialect: Option<String>,
 }
 
 /// 自然语言转 SQL 请求
