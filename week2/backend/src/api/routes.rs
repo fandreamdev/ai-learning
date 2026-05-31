@@ -13,6 +13,7 @@ use std::sync::Arc;
 use tower_http::services::ServeDir;
 use uuid::Uuid;
 use chrono::Utc;
+use validator::Validate;
 
 use crate::error::{AppError, AppResult};
 use crate::middleware::auth::{
@@ -25,7 +26,7 @@ use crate::models::{
     DatabaseType, FormatType, LoginRequest, Message, MessageRole, Metric, NlExecuteRequest, NlToSqlRequest,
     QueryHistory, QueryHistoryItem, SendMessageRequest, SqlExecuteRequest, SqlFormatRequest,
     UpdateConnectionRequest, UpdateMetricRequest,
-    UpdateUserRequest, User, UserPublic, UserSession,
+    UpdateUserRequest, User, UserPublic, UserRole, UserSession,
 };
 use crate::repositories::{AuditRepo, ConnectionRepo, ConversationRepo, MetricRepo, QueryRepo, UserRepo};
 use crate::services::chart_generator::ChartGenerator;
@@ -88,6 +89,14 @@ struct QueryHistoryListRequest {
     page_size: i32,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct UserListRequest {
+    #[serde(default = "default_page")]
+    page: i32,
+    #[serde(default = "default_page_size")]
+    page_size: i32,
+}
+
 fn default_page() -> i32 { 1 }
 fn default_page_size() -> i32 { 20 }
 
@@ -130,13 +139,17 @@ fn auth_routes() -> Router<Arc<AppState>> {
 }
 
 fn user_routes() -> Router<Arc<AppState>> {
-    Router::new()
+    let admin_routes = Router::new()
         .route("/", get(list_users_handler))
         .route("/{id}", get(get_user_handler))
         .route("/{id}", put(update_user_handler))
         .route("/{id}", delete(delete_user_handler))
-        .route("/{id}/password", put(change_password_handler))
-        .route_layer(middleware::from_fn(admin_only))
+        .route_layer(middleware::from_fn(admin_only));
+
+    let password_routes = Router::new()
+        .route("/{id}/password", put(change_password_handler));
+
+    admin_routes.merge(password_routes)
 }
 
 fn connection_routes() -> Router<Arc<AppState>> {
@@ -319,6 +332,10 @@ async fn register_handler(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<CreateUserRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    payload
+        .validate()
+        .map_err(|e| AppError::validation(format!("注册参数校验失败: {}", e)))?;
+
     let repo = user_repo(&state);
 
     // 检查用户名是否存在
@@ -336,7 +353,7 @@ async fn register_handler(
         .hash_password(&payload.password)?;
 
     // 创建用户
-    let user = User::new(payload.username, payload.email, password_hash, payload.role);
+    let user = User::new(payload.username, payload.email, password_hash, UserRole::Business);
     let user = repo.create(&user).await?;
 
     let response = serde_json::json!({
@@ -398,10 +415,19 @@ async fn logout_handler(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // 将 refresh_token 加入黑名单
-    if let Some(refresh_token) = payload.get("refresh_token").and_then(|v| v.as_str()) {
-        state.token_blacklist.add(refresh_token).await;
+    let jwt_utils = crate::utils::jwt::JwtUtils::new(&state.config.jwt);
+
+    if let Some(access_token) = payload.get("access_token").and_then(|v| v.as_str()) {
+        let ttl = jwt_utils.get_token_ttl(access_token)?;
+        state.token_blacklist.add(access_token, ttl).await;
     }
+
+    if let Some(refresh_token) = payload.get("refresh_token").and_then(|v| v.as_str()) {
+        let ttl = jwt_utils.get_token_ttl(refresh_token)?;
+        state.token_blacklist.add(refresh_token, ttl).await;
+    }
+
+    state.token_blacklist.cleanup().await;
 
     Ok(Json(serde_json::json!({
         "code": 0,
@@ -413,9 +439,12 @@ async fn logout_handler(
 
 async fn list_users_handler(
     State(state): State<Arc<AppState>>,
+    Query(params): Query<UserListRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let repo = user_repo(&state);
-    let (users, total) = repo.list(1, 100).await?;
+    let page = params.page.max(1);
+    let page_size = params.page_size.max(1).min(100);
+    let (users, total) = repo.list(page, page_size).await?;
 
     let user_list: Vec<UserPublic> = users.iter().map(UserPublic::from).collect();
 
@@ -425,8 +454,8 @@ async fn list_users_handler(
         "data": {
             "items": user_list,
             "total": total,
-            "page": 1,
-            "page_size": 100
+            "page": page,
+            "page_size": page_size
         }
     });
 
@@ -454,9 +483,14 @@ async fn get_user_handler(
 
 async fn update_user_handler(
     State(state): State<Arc<AppState>>,
+    Extension(session): Extension<UserSession>,
     Path(id): Path<Uuid>,
     Json(payload): Json<UpdateUserRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    payload
+        .validate()
+        .map_err(|e| AppError::validation(format!("用户参数校验失败: {}", e)))?;
+
     let repo = user_repo(&state);
     let mut user = repo
         .find_by_id(id)
@@ -464,9 +498,19 @@ async fn update_user_handler(
         .ok_or_else(|| AppError::NotFound("用户不存在".to_string()))?;
 
     if let Some(username) = payload.username {
+        if let Some(existing) = repo.find_by_username(&username).await? {
+            if existing.id != id {
+                return Err(AppError::AlreadyExists("用户名已存在".to_string()));
+            }
+        }
         user.username = username;
     }
     if let Some(email) = payload.email {
+        if let Some(existing) = repo.find_by_email(&email).await? {
+            if existing.id != id {
+                return Err(AppError::AlreadyExists("邮箱已被使用".to_string()));
+            }
+        }
         user.email = email;
     }
     if let Some(role) = payload.role {
@@ -478,6 +522,15 @@ async fn update_user_handler(
     user.updated_at = Utc::now();
 
     let user = repo.update(&user).await?;
+    write_audit(
+        &state,
+        Some(session.user_id),
+        "user.update",
+        Some("user"),
+        Some(user.id.to_string()),
+        serde_json::json!({"username": user.username, "email": user.email, "role": user.role.as_str()}),
+    )
+    .await;
 
     let response = serde_json::json!({
         "code": 0,
@@ -490,28 +543,57 @@ async fn update_user_handler(
 
 async fn delete_user_handler(
     State(state): State<Arc<AppState>>,
+    Extension(session): Extension<UserSession>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let repo = user_repo(&state);
 
-    // 检查用户是否存在
-    repo.find_by_id(id)
+    if session.user_id == id {
+        return Err(AppError::Forbidden("不能禁用当前登录用户".to_string()));
+    }
+
+    let mut user = repo
+        .find_by_id(id)
         .await?
         .ok_or_else(|| AppError::NotFound("用户不存在".to_string()))?;
 
-    repo.delete(id).await?;
+    if user.role.is_admin() && user.is_active && repo.active_admin_count().await? <= 1 {
+        return Err(AppError::Forbidden("不能禁用最后一个管理员".to_string()));
+    }
+
+    user.is_active = false;
+    user.updated_at = Utc::now();
+    let user = repo.update(&user).await?;
+    write_audit(
+        &state,
+        Some(session.user_id),
+        "user.disable",
+        Some("user"),
+        Some(user.id.to_string()),
+        serde_json::json!({"username": user.username}),
+    )
+    .await;
 
     Ok(Json(serde_json::json!({
         "code": 0,
-        "message": "删除成功"
+        "message": "用户已禁用"
     })))
 }
 
 async fn change_password_handler(
     State(state): State<Arc<AppState>>,
+    Extension(session): Extension<UserSession>,
     Path(id): Path<Uuid>,
     Json(payload): Json<ChangePasswordRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    payload
+        .validate()
+        .map_err(|e| AppError::validation(format!("密码参数校验失败: {}", e)))?;
+
+    if session.user_id != id && !session.role.is_admin() {
+        return Err(AppError::Forbidden("无权修改该用户密码".to_string()));
+    }
+
     let repo = user_repo(&state);
     let user = repo
         .find_by_id(id)
@@ -529,6 +611,15 @@ async fn change_password_handler(
     let new_hash = password_utils.hash_password(&payload.new_password)?;
 
     repo.update_password(id, &new_hash).await?;
+    write_audit(
+        &state,
+        Some(session.user_id),
+        "user.change_password",
+        Some("user"),
+        Some(id.to_string()),
+        serde_json::json!({"self_service": session.user_id == id}),
+    )
+    .await;
 
     Ok(Json(serde_json::json!({
         "code": 0,
@@ -566,6 +657,11 @@ async fn create_connection_handler(
     Extension(session): Extension<UserSession>,
     Json(payload): Json<CreateConnectionRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    payload
+        .validate()
+        .map_err(|e| AppError::validation(format!("连接参数校验失败: {}", e)))?;
+    ensure_supported_connection_type(payload.db_type)?;
+
     let repo = connection_repo(&state);
     let user_id = session.user_id;
 
@@ -635,6 +731,10 @@ async fn update_connection_handler(
     Path(id): Path<Uuid>,
     Json(payload): Json<UpdateConnectionRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    payload
+        .validate()
+        .map_err(|e| AppError::validation(format!("连接参数校验失败: {}", e)))?;
+
     let repo = connection_repo(&state);
     let mut conn = repo
         .find_by_id(id)
@@ -646,6 +746,7 @@ async fn update_connection_handler(
         conn.name = name;
     }
     if let Some(db_type) = payload.db_type {
+        ensure_supported_connection_type(db_type)?;
         conn.db_type = db_type;
     }
     if let Some(host) = payload.host {
@@ -703,6 +804,16 @@ async fn delete_connection_handler(
     ensure_connection_access(&conn, &session)?;
 
     repo.delete(id).await?;
+    state.connection_manager.remove_pool(id).await;
+    write_audit(
+        &state,
+        Some(session.user_id),
+        "connection.delete",
+        Some("connection"),
+        Some(id.to_string()),
+        serde_json::json!({"name": conn.name}),
+    )
+    .await;
 
     Ok(Json(serde_json::json!({
         "code": 0,
@@ -725,11 +836,9 @@ async fn test_connection_handler(
         DatabaseType::Mysql => {
             state.connection_manager.test_connection_mysql(&config).await
         }
-        DatabaseType::Sqlite => state
-            .connection_manager
-            .get_sqlite_pool(&config)
-            .await
-            .map(|_| "SQLite".to_string()),
+        DatabaseType::Sqlite => {
+            state.connection_manager.test_connection_sqlite(&config).await
+        }
         _ => Err(AppError::validation("不支持的数据库类型".to_string())),
     };
 
@@ -799,7 +908,7 @@ async fn get_schema_handler(
     for table in &mut tables {
         table.columns = state
             .connection_manager
-            .get_table_columns(&config, &table.table_name)
+            .get_table_columns(&config, &table.table_schema, &table.table_name)
             .await
             .unwrap_or_default();
     }
@@ -843,6 +952,11 @@ async fn execute_sql_handler(
         }
     };
     let rows = mask_result_rows(&columns, rows);
+    let execution_plan = if payload.explain {
+        Some(build_execution_plan(&pool, &payload.sql).await?)
+    } else {
+        None
+    };
 
     let duration_ms = start.elapsed().as_millis() as i64;
     let row_count = rows.len() as i64;
@@ -867,7 +981,7 @@ async fn execute_sql_handler(
             "rows": rows,
             "row_count": row_count,
             "duration_ms": duration_ms,
-            "execution_plan": null
+            "execution_plan": execution_plan
         }
     })))
 }
@@ -988,17 +1102,45 @@ fn encode_connection_password(input: &str, state: &AppState) -> String {
         return base64_encode(input);
     }
 
-    let encrypted: Vec<u8> = input
-        .as_bytes()
-        .iter()
-        .enumerate()
-        .map(|(i, b)| b ^ key[i % key.len()])
-        .collect();
+    let nonce = Uuid::new_v4().as_bytes().to_vec();
+    let encrypted = xor_with_hmac_keystream(input.as_bytes(), key, &nonce);
+    let mac = connection_password_mac(key, &nonce, &encrypted);
 
-    format!("v1:{}", base64_encode_bytes(&encrypted))
+    format!(
+        "v2:{}:{}:{}",
+        base64_encode_bytes(&nonce),
+        base64_encode_bytes(&encrypted),
+        base64_encode_bytes(&mac)
+    )
 }
 
 fn decode_connection_password(encoded: &str, state: &AppState) -> String {
+    if let Some(payload) = encoded.strip_prefix("v2:") {
+        let key = state.config.jwt.secret.as_bytes();
+        let parts: Vec<&str> = payload.split(':').collect();
+        if key.is_empty() || parts.len() != 3 {
+            return String::new();
+        }
+
+        let Some(nonce) = base64_decode(parts[0]) else {
+            return String::new();
+        };
+        let Some(encrypted) = base64_decode(parts[1]) else {
+            return String::new();
+        };
+        let Some(mac) = base64_decode(parts[2]) else {
+            return String::new();
+        };
+
+        let expected_mac = connection_password_mac(key, &nonce, &encrypted);
+        if expected_mac != mac {
+            return String::new();
+        }
+
+        let decrypted = xor_with_hmac_keystream(&encrypted, key, &nonce);
+        return String::from_utf8_lossy(&decrypted).to_string();
+    }
+
     if let Some(ciphertext) = encoded.strip_prefix("v1:") {
         let key = state.config.jwt.secret.as_bytes();
         if !key.is_empty() {
@@ -1014,6 +1156,44 @@ fn decode_connection_password(encoded: &str, state: &AppState) -> String {
     }
 
     decode_legacy_base64_password(encoded)
+}
+
+fn xor_with_hmac_keystream(input: &[u8], key: &[u8], nonce: &[u8]) -> Vec<u8> {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    let mut output = Vec::with_capacity(input.len());
+    let mut counter: u64 = 0;
+
+    while output.len() < input.len() {
+        let mut mac = Hmac::<Sha256>::new_from_slice(key)
+            .expect("HMAC accepts keys of any length");
+        mac.update(nonce);
+        mac.update(&counter.to_be_bytes());
+        let block = mac.finalize().into_bytes();
+
+        for byte in block {
+            if output.len() == input.len() {
+                break;
+            }
+            output.push(input[output.len()] ^ byte);
+        }
+
+        counter += 1;
+    }
+
+    output
+}
+
+fn connection_password_mac(key: &[u8], nonce: &[u8], encrypted: &[u8]) -> Vec<u8> {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    let mut mac = Hmac::<Sha256>::new_from_slice(key)
+        .expect("HMAC accepts keys of any length");
+    mac.update(nonce);
+    mac.update(encrypted);
+    mac.finalize().into_bytes().to_vec()
 }
 
 fn decode_legacy_base64_password(encoded: &str) -> String {
@@ -1033,13 +1213,23 @@ async fn format_sql_handler(
     State(_state): State<Arc<AppState>>,
     Json(payload): Json<SqlFormatRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    use sqlparser::dialect::{PostgreSqlDialect, GenericDialect};
+    use sqlparser::dialect::{MySqlDialect, PostgreSqlDialect, SQLiteDialect};
     use sqlparser::parser::Parser;
 
     let dialect = match payload.dialect.as_str() {
-        "mysql" => Box::new(GenericDialect {}) as Box<dyn sqlparser::dialect::Dialect>,
+        "mysql" => Box::new(MySqlDialect {}) as Box<dyn sqlparser::dialect::Dialect>,
         "postgresql" | "postgres" => Box::new(PostgreSqlDialect {}) as Box<dyn sqlparser::dialect::Dialect>,
-        _ => Box::new(GenericDialect {}) as Box<dyn sqlparser::dialect::Dialect>,
+        "sqlite" => Box::new(SQLiteDialect {}) as Box<dyn sqlparser::dialect::Dialect>,
+        "clickhouse" => {
+            return Err(AppError::ValidationError(
+                "ClickHouse SQL formatting is not implemented yet".to_string(),
+            ));
+        }
+        _ => {
+            return Err(AppError::ValidationError(
+                "Unsupported SQL dialect".to_string(),
+            ));
+        }
     };
 
     let statements = Parser::parse_sql(dialect.as_ref(), &payload.sql)
@@ -1107,21 +1297,37 @@ async fn explain_sql_handler(
     let config = get_connection_config_for_session(&state, payload.connection_id, &session).await?;
     validate_select_sql(&state, &payload.sql)?;
     let pool_type = state.connection_manager.get_pool(&config).await?;
+    let result = build_execution_plan(&pool_type, &payload.sql).await?;
 
-    let explain_sql = format!("EXPLAIN {}", payload.sql);
+    Ok(Json(serde_json::json!({
+        "code": 0,
+        "message": "Success",
+        "data": result
+    })))
+}
+
+async fn build_execution_plan(
+    pool_type: &ConnectionPool,
+    sql: &str,
+) -> AppResult<serde_json::Value> {
+    let explain_sql = match pool_type {
+        ConnectionPool::Sqlite(_) => format!("EXPLAIN QUERY PLAN {}", sql),
+        _ => format!("EXPLAIN {}", sql),
+    };
+
     let start = std::time::Instant::now();
 
     let result = match pool_type {
         ConnectionPool::Postgres(pg_pool) => {
             let rows: Vec<(String,)> = sqlx::query_as(&explain_sql)
-                .fetch_all(&pg_pool)
+                .fetch_all(pg_pool)
                 .await
                 .map_err(|e| AppError::database(format!("EXPLAIN 失败: {}", e)))?;
             rows.into_iter().map(|row| row.0).collect::<Vec<_>>().join("\n")
         }
         ConnectionPool::Mysql(mysql_pool) => {
             let rows = sqlx::query(&explain_sql)
-                .fetch_all(&mysql_pool)
+                .fetch_all(mysql_pool)
                 .await
                 .map_err(|e| AppError::database(format!("EXPLAIN 失败: {}", e)))?;
             rows.into_iter()
@@ -1136,7 +1342,7 @@ async fn explain_sql_handler(
         }
         ConnectionPool::Sqlite(sqlite_pool) => {
             let rows = sqlx::query(&explain_sql)
-                .fetch_all(&sqlite_pool)
+                .fetch_all(sqlite_pool)
                 .await
                 .map_err(|e| AppError::database(format!("EXPLAIN 失败: {}", e)))?;
             rows.into_iter()
@@ -1153,22 +1359,16 @@ async fn explain_sql_handler(
 
     let duration_ms = start.elapsed().as_millis() as i64;
 
-    let response = serde_json::json!({
-        "code": 0,
-        "message": "Success",
-        "data": {
-            "plan_type": "SELECT",
-            "estimated_cost": null,
-            "estimated_rows": null,
-            "actual_rows": null,
-            "duration_ms": duration_ms,
-            "details": {
-                "raw": result
-            }
+    Ok(serde_json::json!({
+        "plan_type": "SELECT",
+        "estimated_cost": null,
+        "estimated_rows": null,
+        "actual_rows": null,
+        "duration_ms": duration_ms,
+        "details": {
+            "raw": result
         }
-    });
-
-    Ok(Json(response))
+    }))
 }
 
 async fn preview_data_handler(
@@ -1264,6 +1464,35 @@ fn validate_table_identifier(identifier: &str) -> AppResult<String> {
     }
 }
 
+fn ensure_supported_connection_type(db_type: DatabaseType) -> AppResult<()> {
+    match db_type {
+        DatabaseType::Mysql | DatabaseType::Postgresql | DatabaseType::Sqlite => Ok(()),
+        DatabaseType::Clickhouse => Err(AppError::ValidationError(
+            "ClickHouse connection is not implemented yet".to_string(),
+        )),
+    }
+}
+
+fn ensure_dialect_matches_connection(dialect: &str, db_type: DatabaseType) -> AppResult<()> {
+    let normalized = dialect.to_ascii_lowercase();
+    let matches = match db_type {
+        DatabaseType::Mysql => normalized == "mysql",
+        DatabaseType::Postgresql => normalized == "postgresql" || normalized == "postgres",
+        DatabaseType::Sqlite => normalized == "sqlite",
+        DatabaseType::Clickhouse => normalized == "clickhouse",
+    };
+
+    if matches {
+        Ok(())
+    } else {
+        Err(AppError::ValidationError(format!(
+            "Dialect '{}' does not match connection type '{}'",
+            dialect,
+            db_type.as_str()
+        )))
+    }
+}
+
 // ==================== NL 处理器 ====================
 
 async fn nl_convert_handler(
@@ -1271,48 +1500,86 @@ async fn nl_convert_handler(
     Extension(session): Extension<UserSession>,
     Json(payload): Json<NlToSqlRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    payload
+        .validate()
+        .map_err(|e| AppError::validation(format!("自然语言查询参数校验失败: {}", e)))?;
+
     let llm_client = &state.llm_client;
+    let config = get_connection_config_for_session(&state, payload.connection_id, &session).await?;
+    ensure_dialect_matches_connection(&payload.dialect, config.db_type)?;
 
     // 获取 schema 上下文
-    let schema_context = if let Ok(config) = get_connection_config_for_session(&state, payload.connection_id, &session).await {
-        match state.connection_manager.get_schema(&config).await {
-            Ok(tables) => {
-                let mut table_info = Vec::new();
-                for table in tables {
-                    let columns = state
-                        .connection_manager
-                        .get_table_columns(&config, &table.table_name)
-                        .await
-                        .unwrap_or_default();
-                    let column_info = columns
-                        .iter()
-                        .map(|c| {
-                            let comment = c.comment.as_deref().unwrap_or("");
-                            if comment.is_empty() {
-                                format!("{} {}", c.name, c.data_type)
-                            } else {
-                                format!("{} {} ({})", c.name, c.data_type, comment)
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    table_info.push(format!(
-                        "{}.{} ({}) columns: [{}]",
-                        table.table_schema, table.table_name, table.table_type, column_info
-                    ));
-                }
-                Some(table_info.join(", "))
+    let schema_context = match state.connection_manager.get_schema(&config).await {
+        Ok(tables) => {
+            let mut table_info = Vec::new();
+            for table in tables {
+                let columns = state
+                    .connection_manager
+                    .get_table_columns(&config, &table.table_schema, &table.table_name)
+                    .await
+                    .unwrap_or_default();
+                let column_info = columns
+                    .iter()
+                    .map(|c| {
+                        let comment = c.comment.as_deref().unwrap_or("");
+                        if comment.is_empty() {
+                            format!("{} {}", c.name, c.data_type)
+                        } else {
+                            format!("{} {} ({})", c.name, c.data_type, comment)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                table_info.push(format!(
+                    "{}.{} ({}) columns: [{}]",
+                    table.table_schema, table.table_name, table.table_type, column_info
+                ));
             }
-            Err(_) => None,
+            Some(table_info.join(", "))
+        }
+        Err(_) => None,
+    };
+
+    let conversation_context = if let Some(conversation_id) = payload.conversation_id {
+        let repo = conversation_repo(&state);
+        if let Some(conversation) = repo.get_conversation(conversation_id).await? {
+            ensure_conversation_access(&conversation, &session)?;
+            let messages = repo.list_messages(conversation_id).await?;
+            let recent = messages
+                .iter()
+                .rev()
+                .take(6)
+                .map(|m| format!("{}: {}", m.role.as_str(), m.content))
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n");
+            if recent.is_empty() {
+                None
+            } else {
+                Some(format!("历史对话:\n{}", recent))
+            }
+        } else {
+            return Err(AppError::NotFound("对话不存在".to_string()));
         }
     } else {
         None
     };
 
+    let question = match conversation_context {
+        Some(context) => format!(
+            "目标数据库方言: {}\n{}\n当前问题: {}",
+            payload.dialect, context, payload.question
+        ),
+        None => format!("目标数据库方言: {}\n当前问题: {}", payload.dialect, payload.question),
+    };
+
     // 调用 LLM 进行转换
     let result = llm_client
-        .convert_nl_to_sql(&payload.question, schema_context.as_deref())
+        .convert_nl_to_sql(&question, schema_context.as_deref())
         .await?;
+    validate_select_sql(&state, &result.sql)?;
 
     let response = serde_json::json!({
         "code": 0,
@@ -1353,7 +1620,7 @@ async fn nl_execute_handler(
     let duration_ms = start.elapsed().as_millis() as i64;
     let row_count = rows.len() as i64;
     history.mark_success(duration_ms, row_count);
-    let _ = query_repo(&state).create(&history).await;
+    let history = query_repo(&state).create(&history).await.unwrap_or(history);
     write_audit(
         &state,
         Some(session.user_id),
@@ -1364,15 +1631,19 @@ async fn nl_execute_handler(
     )
     .await;
 
-    let chart_config = if let Some(chart_type) = payload.chart_type.as_deref() {
-        let generator = ChartGenerator::new();
-        match generator.switch_chart_type(&columns, &rows, chart_type) {
-            Ok(config) => Some(config.echarts_config),
-            Err(_) => None,
-        }
-    } else {
-        None
+    let generator = ChartGenerator::new();
+    let chart_config = match payload.chart_type.as_deref() {
+        Some(chart_type) => generator
+            .switch_chart_type(&columns, &rows, chart_type)
+            .ok()
+            .map(|config| config.echarts_config),
+        None => generator
+            .recommend(&columns, &rows)
+            .ok()
+            .map(|recommendation| recommendation.chart_config.echarts_config),
     };
+
+    let data_insight = build_data_insight(&columns, row_count, duration_ms);
 
     let response = serde_json::json!({
         "code": 0,
@@ -1383,7 +1654,7 @@ async fn nl_execute_handler(
             "row_count": row_count,
             "duration_ms": duration_ms,
             "chart_config": chart_config,
-            "data_insight": null
+            "data_insight": data_insight
         }
     });
 
@@ -1396,6 +1667,28 @@ fn ensure_conversation_access(conv: &Conversation, session: &UserSession) -> App
     } else {
         Err(AppError::Forbidden("无权访问该对话".to_string()))
     }
+}
+
+fn build_data_insight(
+    columns: &[ColumnMetadata],
+    row_count: i64,
+    duration_ms: i64,
+) -> Option<String> {
+    if columns.is_empty() {
+        return None;
+    }
+
+    let column_names = columns
+        .iter()
+        .take(5)
+        .map(|column| column.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    Some(format!(
+        "本次查询返回 {} 行，耗时 {} ms，主要字段包括 {}。",
+        row_count, duration_ms, column_names
+    ))
 }
 
 // ==================== 对话处理器 ====================
@@ -1425,11 +1718,24 @@ async fn create_conversation_handler(
     Extension(session): Extension<UserSession>,
     Json(payload): Json<CreateConversationRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    payload
+        .validate()
+        .map_err(|e| AppError::validation(format!("对话参数校验失败: {}", e)))?;
+
     let repo = conversation_repo(&state);
     let user_id = session.user_id;
 
     let conv = Conversation::new(user_id, payload.title);
     let conv = repo.create_conversation(&conv).await?;
+    write_audit(
+        &state,
+        Some(session.user_id),
+        "conversation.create",
+        Some("conversation"),
+        Some(conv.id.to_string()),
+        serde_json::json!({"title": conv.title}),
+    )
+    .await;
 
     let response = serde_json::json!({
         "code": 0,
@@ -1473,6 +1779,15 @@ async fn delete_conversation_handler(
     ensure_conversation_access(&conv, &session)?;
 
     repo.delete_conversation(id).await?;
+    write_audit(
+        &state,
+        Some(session.user_id),
+        "conversation.delete",
+        Some("conversation"),
+        Some(id.to_string()),
+        serde_json::json!({"title": conv.title}),
+    )
+    .await;
 
     Ok(Json(serde_json::json!({
         "code": 0,
@@ -1512,6 +1827,10 @@ async fn send_message_handler(
     Path(id): Path<Uuid>,
     Json(payload): Json<SendMessageRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    payload
+        .validate()
+        .map_err(|e| AppError::validation(format!("消息参数校验失败: {}", e)))?;
+
     let repo = conversation_repo(&state);
 
     // 检查对话是否存在
@@ -1540,25 +1859,15 @@ async fn send_message_handler(
         history_context, payload.content
     );
 
-    let llm_response = llm_client.call_llm(&prompt, "gpt-4o-mini").await;
-
-    let (assistant_content, sql_result, explanation) = match llm_response {
-        Ok(response) => {
-            // 尝试从响应中提取 SQL
-            let sql = extract_sql_from_text(&response);
-            let explanation = if sql.is_some() {
-                "已根据您的问题生成 SQL 查询".to_string()
-            } else {
-                response.clone()
-            };
-            (response, sql, Some(explanation))
-        }
-        Err(e) => {
-            (format!("抱歉，我无法处理您的请求: {}", e), None, None)
-        }
+    let response = llm_client.call_llm(&prompt, "gpt-4o-mini").await?;
+    let sql_result = extract_sql_from_text(&response);
+    let explanation = if sql_result.is_some() {
+        Some("已根据您的问题生成 SQL 查询".to_string())
+    } else {
+        Some(response.clone())
     };
 
-    let assistant_msg = Message::assistant_message(id, assistant_content, sql_result, explanation);
+    let assistant_msg = Message::assistant_message(id, response, sql_result, explanation);
     let assistant_msg = repo.create_message(&assistant_msg).await?;
 
     // 更新对话时间
@@ -1857,12 +2166,15 @@ async fn export_chart_handler(
                     .map_err(|e| AppError::internal(format!("写入文件失败: {}", e)))?;
             }
         }
+        "png" => {
+            return Err(AppError::ValidationError(
+                "PNG export requires a rendering service and is not implemented yet".to_string(),
+            ));
+        }
         _ => {
-            // 其他格式，返回 JSON 配置
-            let json_str = serde_json::to_string_pretty(&payload.config)
-                .map_err(|e| AppError::internal(format!("JSON 序列化失败: {}", e)))?;
-            std::fs::write(&file_path, json_str)
-                .map_err(|e| AppError::internal(format!("写入文件失败: {}", e)))?;
+            return Err(AppError::ValidationError(
+                "Unsupported chart export format".to_string(),
+            ));
         }
     }
 
@@ -1872,7 +2184,7 @@ async fn export_chart_handler(
         "data": {
             "format": format,
             "filename": filename,
-            "url": format!("/exports/{}", filename),
+            "url": format!("/api/v1/exports/{}", filename),
             "path": file_path.to_string_lossy()
         }
     });
@@ -1920,6 +2232,11 @@ async fn create_metric_handler(
     Extension(session): Extension<UserSession>,
     Json(payload): Json<CreateMetricRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    payload
+        .validate()
+        .map_err(|e| AppError::validation(format!("指标参数校验失败: {}", e)))?;
+    validate_select_sql(&state, &payload.expression)?;
+
     let user_id = session.user_id;
 
     let mut metric = Metric::new(payload.name, payload.code, payload.expression, Some(user_id));
@@ -1978,6 +2295,10 @@ async fn update_metric_handler(
     Path(id): Path<Uuid>,
     Json(payload): Json<UpdateMetricRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    payload
+        .validate()
+        .map_err(|e| AppError::validation(format!("指标参数校验失败: {}", e)))?;
+
     let repo = metric_repo(&state);
     let mut metric = repo
         .find_by_id(id)
@@ -1991,6 +2312,7 @@ async fn update_metric_handler(
         metric.description = Some(description);
     }
     if let Some(expression) = payload.expression {
+        validate_select_sql(&state, &expression)?;
         metric.expression = expression;
     }
     if let Some(dimensions) = payload.dimensions {
@@ -2029,7 +2351,8 @@ async fn delete_metric_handler(
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let repo = metric_repo(&state);
-    repo.find_by_id(id)
+    let metric = repo
+        .find_by_id(id)
         .await?
         .ok_or_else(|| AppError::NotFound("指标不存在".to_string()))?;
     repo.delete(id).await?;
@@ -2039,16 +2362,7 @@ async fn delete_metric_handler(
         "metric.delete",
         Some("metric"),
         Some(id.to_string()),
-        serde_json::json!({}),
-    )
-    .await;
-    write_audit(
-        &state,
-        Some(session.user_id),
-        "connection.delete",
-        Some("connection"),
-        Some(id.to_string()),
-        serde_json::json!({}),
+        serde_json::json!({"code": metric.code}),
     )
     .await;
 
@@ -2101,25 +2415,25 @@ async fn execute_metric_handler(
 
     let value = match pool_type {
         ConnectionPool::Postgres(pg_pool) => {
-            let row: (serde_json::Value,) = sqlx::query_as(&sql)
+            let row = sqlx::query(&sql)
                 .fetch_one(&pg_pool)
                 .await
                 .map_err(|e| AppError::database(format!("指标执行失败: {}", e)))?;
-            row.0
+            pg_value_to_json(&row, 0)
         }
         ConnectionPool::Mysql(mysql_pool) => {
-            let row: (serde_json::Value,) = sqlx::query_as(&sql)
+            let row = sqlx::query(&sql)
                 .fetch_one(&mysql_pool)
                 .await
                 .map_err(|e| AppError::database(format!("指标执行失败: {}", e)))?;
-            row.0
+            mysql_value_to_json(&row, 0)
         }
         ConnectionPool::Sqlite(sqlite_pool) => {
-            let row: (serde_json::Value,) = sqlx::query_as(&sql)
+            let row = sqlx::query(&sql)
                 .fetch_one(&sqlite_pool)
                 .await
                 .map_err(|e| AppError::database(format!("指标执行失败: {}", e)))?;
-            row.0
+            sqlite_value_to_json(&row, 0)
         }
     };
 
@@ -2161,6 +2475,15 @@ async fn execute_metric_handler(
             "error": null
         }
     });
+    write_audit(
+        &state,
+        Some(session.user_id),
+        "metric.execute",
+        Some("metric"),
+        Some(metric.id.to_string()),
+        serde_json::json!({"code": metric.code, "duration_ms": duration_ms}),
+    )
+    .await;
 
     Ok(Json(response))
 }
@@ -2176,8 +2499,10 @@ async fn get_metric_lineage_handler(
         .await?
         .ok_or_else(|| AppError::NotFound("指标不存在".to_string()))?;
 
-    // 解析 SQL 提取表名和列名
-    let (source_tables, source_columns) = analyze_sql_lineage(&metric.expression);
+    let analysis = SqlAnalyzer::new(Arc::new(state.config.security.clone()))
+        .analyze(&metric.expression)?;
+    let source_tables = analysis.referenced_tables;
+    let source_columns = analysis.referenced_columns;
     let metrics = repo.list_all().await?;
 
     // 查找依赖的指标
@@ -2222,50 +2547,6 @@ async fn get_metric_lineage_handler(
     });
 
     Ok(Json(response))
-}
-
-/// 分析 SQL 语句提取血缘信息
-fn analyze_sql_lineage(sql: &str) -> (Vec<String>, Vec<String>) {
-    use regex::Regex;
-
-    let mut tables = Vec::new();
-    let mut columns = Vec::new();
-
-    // 提取 FROM 和 JOIN 后面的表名
-    let table_regex = Regex::new(r"(?i)(?:FROM|JOIN)\s+([a-zA-Z_][a-zA-Z0-9_]*)").unwrap();
-    for cap in table_regex.captures_iter(sql) {
-        if let Some(table) = cap.get(1) {
-            let table_name = table.as_str().to_string();
-            if !tables.contains(&table_name) {
-                tables.push(table_name);
-            }
-        }
-    }
-
-    // 提取 SELECT 后的列名
-    let column_regex = Regex::new(r"(?i)SELECT\s+(.*?)\s+FROM").unwrap();
-    if let Some(cap) = column_regex.captures(sql) {
-        if let Some(cols_str) = cap.get(1) {
-            // 分割可能的多个列
-            let cols = cols_str.as_str().split(',');
-            for col in cols {
-                let col = col.trim();
-                // 提取别名或完整列名
-                let col_name = if col.contains(" as ") {
-                    col.split(" as ").nth(1).unwrap_or(col).trim().to_string()
-                } else if col.contains('.') {
-                    col.split('.').last().unwrap_or(col).trim().to_string()
-                } else {
-                    col.to_string()
-                };
-                if !col_name.is_empty() && col_name != "*" {
-                    columns.push(col_name);
-                }
-            }
-        }
-    }
-
-    (tables, columns)
 }
 
 // ==================== 工具函数 ====================

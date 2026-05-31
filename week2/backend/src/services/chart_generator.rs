@@ -275,7 +275,7 @@ impl ChartGenerator {
     fn build_echarts_config(
         &self,
         chart_type: &ChartType,
-        _columns: &[ColumnMetadata],
+        columns: &[ColumnMetadata],
         rows: &[Vec<serde_json::Value>],
     ) -> AppResult<serde_json::Value> {
         let mut config = serde_json::json!({
@@ -325,7 +325,62 @@ impl ChartGenerator {
                     }).collect::<Vec<_>>()
                 }]);
             }
-            _ => {}
+            ChartType::Scatter => {
+                config["xAxis"] = serde_json::json!({"type": "value"});
+                config["yAxis"] = serde_json::json!({"type": "value"});
+                config["series"] = serde_json::json!([{
+                    "type": "scatter",
+                    "data": rows.iter().filter_map(|r| {
+                        let x = r.first().and_then(json_to_f64)?;
+                        let y = r.get(1).and_then(json_to_f64)?;
+                        Some(vec![x, y])
+                    }).collect::<Vec<_>>()
+                }]);
+            }
+            ChartType::Funnel => {
+                config["series"] = serde_json::json!([{
+                    "type": "funnel",
+                    "data": named_value_rows(rows)
+                }]);
+            }
+            ChartType::Radar => {
+                let indicators = rows
+                    .iter()
+                    .filter_map(|r| r.first().and_then(|v| v.as_str()))
+                    .map(|name| serde_json::json!({"name": name}))
+                    .collect::<Vec<_>>();
+                let values = rows
+                    .iter()
+                    .filter_map(|r| r.get(1).and_then(json_to_f64))
+                    .collect::<Vec<_>>();
+                config["radar"] = serde_json::json!({"indicator": indicators});
+                config["series"] = serde_json::json!([{
+                    "type": "radar",
+                    "data": [{"value": values}]
+                }]);
+            }
+            ChartType::Gauge => {
+                let value = rows
+                    .first()
+                    .and_then(|r| r.get(1).or_else(|| r.first()))
+                    .and_then(json_to_f64)
+                    .unwrap_or_default();
+                config["series"] = serde_json::json!([{
+                    "type": "gauge",
+                    "data": [{"value": value, "name": columns.first().map(|c| c.name.as_str()).unwrap_or("value")}]
+                }]);
+            }
+            ChartType::Map => {
+                config["series"] = serde_json::json!([{
+                    "type": "map",
+                    "map": "china",
+                    "data": named_value_rows(rows)
+                }]);
+            }
+            ChartType::Table => {
+                config["columns"] = serde_json::json!(columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>());
+                config["rows"] = serde_json::json!(rows);
+            }
         }
 
         Ok(config)
@@ -344,6 +399,10 @@ impl ChartGenerator {
             "pie" => ChartType::Pie,
             "doughnut" => ChartType::Doughnut,
             "scatter" => ChartType::Scatter,
+            "map" => ChartType::Map,
+            "funnel" => ChartType::Funnel,
+            "radar" => ChartType::Radar,
+            "gauge" => ChartType::Gauge,
             "table" => ChartType::Table,
             _ => return Err(crate::error::AppError::validation("不支持的图表类型".to_string())),
         };
@@ -357,6 +416,27 @@ impl Default for ChartGenerator {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn json_to_f64(value: &serde_json::Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_i64().map(|v| v as f64))
+        .or_else(|| value.as_u64().map(|v| v as f64))
+}
+
+fn named_value_rows(rows: &[Vec<serde_json::Value>]) -> Vec<serde_json::Value> {
+    rows.iter()
+        .map(|r| {
+            let name = r
+                .first()
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let value = r.get(1).and_then(json_to_f64).unwrap_or_default();
+            serde_json::json!({ "name": name, "value": value })
+        })
+        .collect()
 }
 
 /// 数据分析结果

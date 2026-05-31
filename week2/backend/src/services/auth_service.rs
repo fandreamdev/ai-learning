@@ -5,7 +5,8 @@
 use crate::config::AppConfig;
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    ChangePasswordRequest, CreateUserRequest, LoginRequest, LoginResponse, User, UserPublic, UserRole, UserSession,
+    ChangePasswordRequest, CreateUserRequest, LoginRequest, LoginResponse, User, UserPublic,
+    UserRole, UserSession,
 };
 use crate::repositories::UserRepo;
 use crate::utils::{JwtUtils, PasswordUtils};
@@ -32,12 +33,22 @@ impl AuthService {
     /// 用户注册
     pub async fn register(&self, request: CreateUserRequest) -> AppResult<UserPublic> {
         // 检查用户名是否存在
-        if self.user_repo.find_by_username(&request.username).await?.is_some() {
+        if self
+            .user_repo
+            .find_by_username(&request.username)
+            .await?
+            .is_some()
+        {
             return Err(AppError::AlreadyExists("用户名已存在".to_string()));
         }
 
         // 检查邮箱是否存在
-        if self.user_repo.find_by_email(&request.email).await?.is_some() {
+        if self
+            .user_repo
+            .find_by_email(&request.email)
+            .await?
+            .is_some()
+        {
             return Err(AppError::AlreadyExists("邮箱已被使用".to_string()));
         }
 
@@ -45,12 +56,7 @@ impl AuthService {
         let password_hash = self.password_utils.hash_password(&request.password)?;
 
         // 创建用户
-        let user = User::new(
-            request.username,
-            request.email,
-            password_hash,
-            request.role,
-        );
+        let user = User::new(request.username, request.email, password_hash, request.role);
 
         let user = self.user_repo.create(&user).await?;
 
@@ -67,8 +73,13 @@ impl AuthService {
             .ok_or_else(|| AppError::AuthenticationFailed("用户名或密码错误".to_string()))?;
 
         // 验证密码
-        if !self.password_utils.verify_password(&request.password, &user.password_hash) {
-            return Err(AppError::AuthenticationFailed("用户名或密码错误".to_string()));
+        if !self
+            .password_utils
+            .verify_password(&request.password, &user.password_hash)
+        {
+            return Err(AppError::AuthenticationFailed(
+                "用户名或密码错误".to_string(),
+            ));
         }
 
         // 检查用户是否激活
@@ -77,8 +88,12 @@ impl AuthService {
         }
 
         // 生成 Token
-        let access_token = self.jwt_utils.generate_access_token(&user.id, &user.username, user.role)?;
-        let refresh_token = self.jwt_utils.generate_refresh_token(&user.id, &user.username, user.role)?;
+        let access_token =
+            self.jwt_utils
+                .generate_access_token(&user.id, &user.username, user.role)?;
+        let refresh_token =
+            self.jwt_utils
+                .generate_refresh_token(&user.id, &user.username, user.role)?;
 
         Ok(LoginResponse {
             access_token,
@@ -110,8 +125,12 @@ impl AuthService {
         }
 
         // 生成新 Token
-        let new_access_token = self.jwt_utils.generate_access_token(&user.id, &user.username, user.role)?;
-        let new_refresh_token = self.jwt_utils.generate_refresh_token(&user.id, &user.username, user.role)?;
+        let new_access_token =
+            self.jwt_utils
+                .generate_access_token(&user.id, &user.username, user.role)?;
+        let new_refresh_token =
+            self.jwt_utils
+                .generate_refresh_token(&user.id, &user.username, user.role)?;
 
         Ok(LoginResponse {
             access_token: new_access_token,
@@ -140,7 +159,11 @@ impl AuthService {
     }
 
     /// 修改密码
-    pub async fn change_password(&self, user_id: uuid::Uuid, request: ChangePasswordRequest) -> AppResult<()> {
+    pub async fn change_password(
+        &self,
+        user_id: uuid::Uuid,
+        request: ChangePasswordRequest,
+    ) -> AppResult<()> {
         // 获取用户
         let user = self
             .user_repo
@@ -149,7 +172,10 @@ impl AuthService {
             .ok_or_else(|| AppError::NotFound("用户不存在".to_string()))?;
 
         // 验证旧密码
-        if !self.password_utils.verify_password(&request.old_password, &user.password_hash) {
+        if !self
+            .password_utils
+            .verify_password(&request.old_password, &user.password_hash)
+        {
             return Err(AppError::validation("旧密码不正确".to_string()));
         }
 
@@ -266,16 +292,13 @@ pub mod repositories {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_password_strength_check() {
-        let utils = PasswordUtils::default();
-
-        assert!(!utils.check_password_strength("123").meets_minimum());
-        assert!(utils.check_password_strength("Password123!").meets_minimum());
+        assert!(!PasswordUtils::check_password_strength("123").meets_minimum());
+        assert!(PasswordUtils::check_password_strength("Password123!").meets_minimum());
     }
 }

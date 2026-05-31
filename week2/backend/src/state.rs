@@ -5,42 +5,44 @@
 use crate::config::AppConfig;
 use crate::services::connection_manager::ConnectionManager;
 use crate::services::llm_client::LlmClient;
+use chrono::Utc;
 use sqlx::postgres::PgPoolOptions;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use std::collections::HashSet;
 
 /// Token 黑名单
 #[derive(Clone, Default)]
 pub struct TokenBlacklist {
     /// 存储已撤销的 token (使用内存存储，Redis 作为备份)
-    tokens: Arc<RwLock<HashSet<String>>>,
+    tokens: Arc<RwLock<HashMap<String, i64>>>,
 }
 
 impl TokenBlacklist {
     /// 添加 token 到黑名单
-    pub async fn add(&self, token: &str) {
+    pub async fn add(&self, token: &str, ttl_seconds: u64) {
+        if token.is_empty() || ttl_seconds == 0 {
+            return;
+        }
+
+        let expires_at = Utc::now().timestamp() + ttl_seconds as i64;
         let mut tokens = self.tokens.write().await;
-        tokens.insert(token.to_string());
+        tokens.insert(token.to_string(), expires_at);
     }
 
     /// 检查 token 是否在黑名单中
     pub async fn contains(&self, token: &str) -> bool {
-        let tokens = self.tokens.read().await;
-        tokens.contains(token)
+        let now = Utc::now().timestamp();
+        let mut tokens = self.tokens.write().await;
+        tokens.retain(|_, expires_at| *expires_at > now);
+        tokens.contains_key(token)
     }
 
     /// 清理过期的 token (可以定期调用)
     pub async fn cleanup(&self) {
+        let now = Utc::now().timestamp();
         let mut tokens = self.tokens.write().await;
-        tokens.retain(|t| !Self::is_expired(t));
-    }
-
-    /// 检查 token 是否已过期 (简化实现，实际应该解析 JWT 获取 exp)
-    fn is_expired(_token: &str) -> bool {
-        // 这里简化处理，实际应该解析 JWT 获取过期时间
-        // 如果使用 Redis，可以在这里检查 Redis 中的 TTL
-        false
+        tokens.retain(|_, expires_at| *expires_at > now);
     }
 }
 

@@ -39,7 +39,9 @@ impl PasswordUtils {
         let hash = self
             .argon2
             .hash_password(password.as_bytes(), &salt)
-            .map_err(|e| crate::error::AppError::internal(format!("Password hashing failed: {}", e)))?;
+            .map_err(|e| {
+                crate::error::AppError::internal(format!("Password hashing failed: {}", e))
+            })?;
 
         Ok(hash.to_string())
     }

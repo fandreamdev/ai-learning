@@ -174,6 +174,15 @@ impl ConnectionManager {
         Ok(version.0)
     }
 
+    pub async fn test_connection_sqlite(&self, config: &ConnectionConfig) -> AppResult<String> {
+        let pool = self.get_sqlite_pool(config).await?;
+        let version: (String,) = sqlx::query_as("SELECT sqlite_version()")
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| AppError::database(format!("查询版本失败: {}", e)))?;
+        Ok(format!("SQLite {}", version.0))
+    }
+
     /// 获取数据库 Schema 信息
     pub async fn get_schema(&self, config: &ConnectionConfig) -> AppResult<Vec<TableInfo>> {
         match config.db_type {
@@ -213,7 +222,7 @@ impl ConnectionManager {
                         t.TABLE_TYPE as table_type,
                         t.TABLE_COMMENT as comment
                     FROM information_schema.TABLES t
-                    WHERE t.TABLE_SCHEMA = DATABASE()
+                    WHERE t.TABLE_SCHEMA = ?
                     AND t.TABLE_TYPE IN ('BASE TABLE', 'VIEW')
                     ORDER BY t.TABLE_NAME
                     "#,
@@ -262,7 +271,12 @@ impl ConnectionManager {
     }
 
     /// 获取表的列信息
-    pub async fn get_table_columns(&self, config: &ConnectionConfig, table_name: &str) -> AppResult<Vec<ColumnInfo>> {
+    pub async fn get_table_columns(
+        &self,
+        config: &ConnectionConfig,
+        table_schema: &str,
+        table_name: &str,
+    ) -> AppResult<Vec<ColumnInfo>> {
         match config.db_type {
             DatabaseType::Postgresql => {
                 let pool = self.get_pg_pool(config).await?;
@@ -278,11 +292,12 @@ impl ConnectionManager {
                         c.numeric_scale,
                         col_description((c.table_schema || '.' || c.table_name)::regclass, c.ordinal_position) as comment
                     FROM information_schema.columns c
-                    WHERE c.table_name = $1 AND c.table_schema = 'public'
+                    WHERE c.table_name = $1 AND c.table_schema = $2
                     ORDER BY c.ordinal_position
                     "#,
                 )
                 .bind(table_name)
+                .bind(table_schema)
                 .fetch_all(&pool)
                 .await?;
 
@@ -308,11 +323,12 @@ impl ConnectionManager {
                         c.NUMERIC_SCALE as numeric_scale,
                         c.COLUMN_COMMENT as comment
                     FROM information_schema.COLUMNS c
-                    WHERE c.TABLE_NAME = ? AND c.TABLE_SCHEMA = DATABASE()
+                    WHERE c.TABLE_NAME = ? AND c.TABLE_SCHEMA = ?
                     ORDER BY c.ORDINAL_POSITION
                     "#,
                 )
                 .bind(table_name)
+                .bind(table_schema)
                 .fetch_all(&pool)
                 .await?;
 
@@ -360,6 +376,13 @@ impl ConnectionManager {
     pub async fn remove_cached_config(&self, id: Uuid) {
         let mut configs = self.configs.write().await;
         configs.remove(&id);
+    }
+
+    pub async fn remove_pool(&self, id: Uuid) {
+        self.pg_pools.write().await.remove(&id);
+        self.mysql_pools.write().await.remove(&id);
+        self.sqlite_pools.write().await.remove(&id);
+        self.remove_cached_config(id).await;
     }
 }
 

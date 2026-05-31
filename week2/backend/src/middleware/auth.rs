@@ -35,6 +35,10 @@ pub async fn auth_middleware(
         ));
     };
 
+    if state.token_blacklist.contains(token).await {
+        return Err(AppError::InvalidToken("Token has been revoked".to_string()));
+    }
+
     // 创建临时 JwtUtils 用于验证
     let jwt_utils = crate::utils::JwtUtils::new(&state.config.jwt);
 

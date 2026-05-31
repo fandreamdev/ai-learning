@@ -125,6 +125,16 @@ impl UserRepo {
         Ok(())
     }
 
+    pub async fn active_admin_count(&self) -> AppResult<i64> {
+        let total: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = TRUE",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(total.0)
+    }
+
     /// 更新密码
     pub async fn update_password(&self, user_id: Uuid, password_hash: &str) -> AppResult<()> {
         sqlx::query(
