@@ -3,10 +3,11 @@
 //! 定义所有 API 端点
 
 use axum::{
-    extract::{Extension, Path, State},
+    extract::{Extension, Path, Query, State},
     routing::{delete, get, post, put},
     Json, Router,
 };
+use sqlx::{Column, Row};
 use std::sync::Arc;
 use uuid::Uuid;
 use chrono::Utc;
@@ -15,14 +16,64 @@ use crate::error::{AppError, AppResult};
 use crate::models::{
     ChangePasswordRequest, ColumnMetadata, ConnectionPublic, Conversation, CreateConnectionRequest,
     CreateConversationRequest, CreateMetricRequest, CreateUserRequest, DatabaseConnection,
-    DatabaseType, LoginRequest, Message, Metric, NlExecuteRequest, NlToSqlRequest,
-    QueryHistory, QueryHistoryItem, SqlExecuteRequest, SqlFormatRequest,
+    DatabaseType, FormatType, LoginRequest, Message, MessageRole, Metric, NlExecuteRequest, NlToSqlRequest,
+    QueryHistory, QueryHistoryItem, SendMessageRequest, SqlExecuteRequest, SqlFormatRequest,
     UpdateConnectionRequest, UpdateMetricRequest,
     UpdateUserRequest, User, UserPublic, UserSession,
 };
 use crate::repositories::{ConnectionRepo, ConversationRepo, QueryRepo, UserRepo};
-use crate::services::connection_manager::ConnectionPool;
+use crate::services::chart_generator::ChartGenerator;
+use crate::services::connection_manager::{ConnectionConfig, ConnectionPool};
 use crate::state::AppState;
+
+/// 预览数据请求
+#[derive(Debug, serde::Deserialize)]
+struct PreviewDataRequest {
+    connection_id: Uuid,
+    table_name: String,
+    #[serde(default = "default_preview_limit")]
+    limit: i32,
+}
+
+fn default_preview_limit() -> i32 {
+    100
+}
+
+/// 图表推荐请求
+#[derive(Debug, serde::Deserialize)]
+struct ChartRecommendRequest {
+    columns: Vec<ColumnMetadata>,
+    rows: Vec<Vec<serde_json::Value>>,
+}
+
+/// 图表生成请求
+#[derive(Debug, serde::Deserialize)]
+struct ChartGenerateRequest {
+    columns: Vec<ColumnMetadata>,
+    rows: Vec<Vec<serde_json::Value>>,
+    chart_type: String,
+}
+
+/// 图表导出请求
+#[derive(Debug, serde::Deserialize)]
+struct ChartExportRequest {
+    config: serde_json::Value,
+    format: Option<String>,
+    filename: Option<String>,
+}
+
+/// 指标列表请求
+#[derive(Debug, serde::Deserialize)]
+struct MetricListRequest {
+    #[serde(default = "default_page")]
+    page: i32,
+    #[serde(default = "default_page_size")]
+    page_size: i32,
+    query: Option<String>,
+}
+
+fn default_page() -> i32 { 1 }
+fn default_page_size() -> i32 { 20 }
 
 // ==================== 指标存储 ====================
 lazy_static::lazy_static! {
@@ -299,8 +350,15 @@ async fn refresh_handler(
     Ok(Json(response))
 }
 
-async fn logout_handler() -> Result<Json<serde_json::Value>, AppError> {
-    // TODO: 实际应该将 refresh_token 加入黑名单
+async fn logout_handler(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    // 将 refresh_token 加入黑名单
+    if let Some(refresh_token) = payload.get("refresh_token").and_then(|v| v.as_str()) {
+        state.token_blacklist.add(refresh_token).await;
+    }
+
     Ok(Json(serde_json::json!({
         "code": 0,
         "message": "登出成功"
@@ -595,23 +653,46 @@ async fn delete_connection_handler(
 }
 
 async fn test_connection_handler(
-    State(_state): State<Arc<AppState>>,
-    Path(_id): Path<Uuid>,
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // TODO: 实际应该使用连接信息测试数据库连接
-    // 目前返回模拟响应
-    let response = serde_json::json!({
-        "code": 0,
-        "message": "连接成功",
-        "data": {
-            "success": true,
-            "message": "数据库连接测试成功",
-            "server_version": "8.0.32",
-            "latency_ms": 45
-        }
-    });
+    let config = get_connection_config(&state, id).await?;
+    let start = std::time::Instant::now();
 
-    Ok(Json(response))
+    let test_result = match config.db_type {
+        DatabaseType::Postgresql => {
+            state.connection_manager.test_connection_pg(&config).await
+        }
+        DatabaseType::Mysql => {
+            state.connection_manager.test_connection_mysql(&config).await
+        }
+        _ => Err(AppError::validation("不支持的数据库类型".to_string())),
+    };
+
+    let latency_ms = start.elapsed().as_millis() as i64;
+
+    match test_result {
+        Ok(version) => Ok(Json(serde_json::json!({
+            "code": 0,
+            "message": "连接成功",
+            "data": {
+                "success": true,
+                "message": "数据库连接测试成功",
+                "server_version": version,
+                "latency_ms": latency_ms
+            }
+        }))),
+        Err(e) => Ok(Json(serde_json::json!({
+            "code": 0,
+            "message": "连接失败",
+            "data": {
+                "success": false,
+                "message": format!("连接失败: {}", e),
+                "server_version": null,
+                "latency_ms": latency_ms
+            }
+        }))),
+    }
 }
 
 async fn set_default_connection_handler(
@@ -634,36 +715,18 @@ async fn set_default_connection_handler(
 }
 
 async fn get_schema_handler(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // TODO: 实际应该从目标数据库获取 schema 信息
-    // 目前返回模拟响应
+    let config = get_connection_config(&state, id).await?;
+    let tables = state.connection_manager.get_schema(&config).await?;
+
     let response = serde_json::json!({
         "code": 0,
         "message": "Success",
         "data": {
             "connection_id": id,
-            "tables": [
-                {
-                    "table_name": "users",
-                    "table_schema": "public",
-                    "table_type": "TABLE",
-                    "row_count": 1000
-                },
-                {
-                    "table_name": "orders",
-                    "table_schema": "public",
-                    "table_type": "TABLE",
-                    "row_count": 5000
-                },
-                {
-                    "table_name": "products",
-                    "table_schema": "public",
-                    "table_type": "TABLE",
-                    "row_count": 500
-                }
-            ],
+            "tables": tables,
             "created_at": chrono::Utc::now()
         }
     });
@@ -790,7 +853,7 @@ async fn sql_execute(
     }
 }
 
-/// 解码密码 (暂未使用，作为备用)
+/// 解码密码
 #[allow(dead_code)]
 fn decode_password(encoded: &str) -> String {
     use base64::{engine::general_purpose::STANDARD, Engine};
@@ -800,12 +863,49 @@ fn decode_password(encoded: &str) -> String {
     }
 }
 
+/// 从连接 ID 获取连接配置
+async fn get_connection_config(
+    state: &AppState,
+    connection_id: Uuid,
+) -> AppResult<ConnectionConfig> {
+    let repo = connection_repo(state);
+    let conn = repo
+        .find_by_id(connection_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("连接不存在".to_string()))?;
+
+    Ok(ConnectionConfig {
+        id: conn.id,
+        name: conn.name,
+        db_type: conn.db_type,
+        host: conn.host.clone(),
+        port: conn.port,
+        database_name: conn.database_name.clone(),
+        username: conn.username.clone(),
+        password: decode_password(&conn.encrypted_password),
+    })
+}
+
 async fn format_sql_handler(
     State(_state): State<Arc<AppState>>,
     Json(payload): Json<SqlFormatRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // TODO: 实际应该使用 sqlparser 格式化 SQL
-    let formatted = payload.sql.clone();
+    use sqlparser::dialect::{PostgreSqlDialect, GenericDialect};
+    use sqlparser::parser::Parser;
+
+    let dialect = match payload.dialect.as_str() {
+        "mysql" => Box::new(GenericDialect {}) as Box<dyn sqlparser::dialect::Dialect>,
+        "postgresql" | "postgres" => Box::new(PostgreSqlDialect {}) as Box<dyn sqlparser::dialect::Dialect>,
+        _ => Box::new(GenericDialect {}) as Box<dyn sqlparser::dialect::Dialect>,
+    };
+
+    let statements = Parser::parse_sql(dialect.as_ref(), &payload.sql)
+        .map_err(|e| AppError::validation(format!("SQL 解析失败: {}", e)))?;
+
+    let formatted = statements
+        .first()
+        .map(|s| s.to_string())
+        .unwrap_or(payload.sql);
 
     let response = serde_json::json!({
         "code": 0,
@@ -854,22 +954,45 @@ async fn get_query_history_handler(
 }
 
 async fn explain_sql_handler(
-    State(_state): State<Arc<AppState>>,
-    Json(_payload): Json<serde_json::Value>,
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<SqlExecuteRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // TODO: 实际应该执行 EXPLAIN 并返回执行计划
+    let config = get_connection_config(&state, payload.connection_id).await?;
+    let pool_type = state.connection_manager.get_pool(&config).await?;
+
+    let explain_sql = format!("EXPLAIN {}", payload.sql);
+    let start = std::time::Instant::now();
+
+    let result = match pool_type {
+        ConnectionPool::Postgres(pg_pool) => {
+            let row: (String,) = sqlx::query_as(&explain_sql)
+                .fetch_one(&pg_pool)
+                .await
+                .map_err(|e| AppError::database(format!("EXPLAIN 失败: {}", e)))?;
+            row.0
+        }
+        ConnectionPool::Mysql(mysql_pool) => {
+            let row: (String,) = sqlx::query_as(&explain_sql)
+                .fetch_one(&mysql_pool)
+                .await
+                .map_err(|e| AppError::database(format!("EXPLAIN 失败: {}", e)))?;
+            row.0
+        }
+    };
+
+    let duration_ms = start.elapsed().as_millis() as i64;
+
     let response = serde_json::json!({
         "code": 0,
         "message": "Success",
         "data": {
             "plan_type": "SELECT",
-            "estimated_cost": 100.5,
-            "estimated_rows": 1000,
+            "estimated_cost": null,
+            "estimated_rows": null,
             "actual_rows": null,
+            "duration_ms": duration_ms,
             "details": {
-                "node_type": "Seq Scan",
-                "relation_name": "users",
-                "filter": null
+                "raw": result
             }
         }
     });
@@ -878,25 +1001,39 @@ async fn explain_sql_handler(
 }
 
 async fn preview_data_handler(
-    State(_state): State<Arc<AppState>>,
-    Json(_payload): Json<serde_json::Value>,
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<PreviewDataRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // TODO: 实际应该预览表数据
+    let config = get_connection_config(&state, payload.connection_id).await?;
+    let pool_type = state.connection_manager.get_pool(&config).await?;
+
+    let sql = format!("SELECT * FROM {} LIMIT {}", payload.table_name, payload.limit);
+
+    let (columns, result_rows) = match pool_type {
+        ConnectionPool::Postgres(pg_pool) => {
+            let rows = sqlx::query(&sql)
+                .fetch_all(&pg_pool)
+                .await
+                .map_err(|e| AppError::database(format!("预览表数据失败: {}", e)))?;
+            extract_pg_rows_data(rows)
+        }
+        ConnectionPool::Mysql(mysql_pool) => {
+            let rows = sqlx::query(&sql)
+                .fetch_all(&mysql_pool)
+                .await
+                .map_err(|e| AppError::database(format!("预览表数据失败: {}", e)))?;
+            extract_mysql_rows_data(rows)
+        }
+    };
+
     let response = serde_json::json!({
         "code": 0,
         "message": "Success",
         "data": {
-            "columns": [
-                {"name": "id", "data_type": "INT", "ordinal": 0},
-                {"name": "name", "data_type": "VARCHAR", "ordinal": 1}
-            ],
-            "rows": [
-                [1, "示例1"],
-                [2, "示例2"],
-                [3, "示例3"]
-            ],
-            "row_count": 3,
-            "table_name": "users"
+            "columns": columns,
+            "rows": result_rows,
+            "row_count": result_rows.len() as i64,
+            "table_name": payload.table_name
         }
     });
 
@@ -907,26 +1044,42 @@ async fn preview_data_handler(
 
 async fn nl_convert_handler(
     State(state): State<Arc<AppState>>,
-    Json(_payload): Json<NlToSqlRequest>,
+    Json(payload): Json<NlToSqlRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // 使用 LLM 客户端将自然语言转换为 SQL
     let llm_client = &state.llm_client;
 
-    // TODO: 实际应该调用 LLM 进行转换
-    // 模拟响应
+    // 获取 schema 上下文
+    let schema_context = if let Ok(config) = get_connection_config(&state, payload.connection_id).await {
+        match state.connection_manager.get_schema(&config).await {
+            Ok(tables) => {
+                let table_info: Vec<String> = tables
+                    .iter()
+                    .map(|t| format!("{}.{} ({})", t.table_schema, t.table_name, t.table_type))
+                    .collect();
+                Some(table_info.join(", "))
+            }
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+
+    // 调用 LLM 进行转换
+    let result = llm_client
+        .convert_nl_to_sql(&payload.question, schema_context.as_deref())
+        .await?;
+
     let response = serde_json::json!({
         "code": 0,
         "message": "Success",
         "data": {
-            "sql": "SELECT COUNT(*) FROM users",
-            "explanation": "这是一个查询用户总数的 SQL 语句",
-            "confidence": 0.95,
-            "estimated_rows": 1000,
-            "referenced_tables": ["users"]
+            "sql": result.sql,
+            "explanation": result.explanation,
+            "confidence": result.confidence,
+            "estimated_rows": result.estimated_rows,
+            "referenced_tables": result.referenced_tables
         }
     });
-
-    let _ = llm_client;
 
     Ok(Json(response))
 }
@@ -1064,13 +1217,8 @@ async fn list_messages_handler(
 async fn send_message_handler(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
-    Json(payload): Json<serde_json::Value>,
+    Json(payload): Json<SendMessageRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let content = payload
-        .get("content")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::ValidationError("content is required".to_string()))?;
-
     let repo = conversation_repo(&state);
 
     // 检查对话是否存在
@@ -1079,17 +1227,44 @@ async fn send_message_handler(
         .ok_or_else(|| AppError::NotFound("对话不存在".to_string()))?;
 
     // 创建用户消息
-    let user_msg = Message::user_message(id, content.to_string());
+    let user_msg = Message::user_message(id, payload.content.clone());
     let user_msg = repo.create_message(&user_msg).await?;
 
-    // TODO: 调用 LLM 生成回复（这里简化处理）
-    let assistant_content = "这是一个模拟的 AI 回复。".to_string();
-    let assistant_msg = Message::assistant_message(
-        id,
-        assistant_content,
-        Some("SELECT 1".to_string()),
-        Some("模拟 SQL".to_string()),
+    // 获取对话历史用于上下文
+    let messages = repo.list_messages(id).await?;
+    let history_context: String = messages
+        .iter()
+        .take(10)
+        .map(|m| format!("{}: {}", if m.role == MessageRole::User { "用户" } else { "助手" }, m.content))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // 调用 LLM 生成回复
+    let llm_client = &state.llm_client;
+    let prompt = format!(
+        "你是一个专业的 SQL 助手。用户正在与你对话。\n\n历史对话:\n{}\n\n当前用户消息: {}",
+        history_context, payload.content
     );
+
+    let llm_response = llm_client.call_llm(&prompt, "gpt-4o-mini").await;
+
+    let (assistant_content, sql_result, explanation) = match llm_response {
+        Ok(response) => {
+            // 尝试从响应中提取 SQL
+            let sql = extract_sql_from_text(&response);
+            let explanation = if sql.is_some() {
+                "已根据您的问题生成 SQL 查询".to_string()
+            } else {
+                response.clone()
+            };
+            (response, sql, Some(explanation))
+        }
+        Err(e) => {
+            (format!("抱歉，我无法处理您的请求: {}", e), None, None)
+        }
+    };
+
+    let assistant_msg = Message::assistant_message(id, assistant_content, sql_result, explanation);
     let assistant_msg = repo.create_message(&assistant_msg).await?;
 
     // 更新对话时间
@@ -1107,22 +1282,121 @@ async fn send_message_handler(
     Ok(Json(response))
 }
 
+/// 从 PostgreSQL 行提取列和数据
+#[allow(dead_code)]
+fn extract_pg_rows_data(rows: Vec<sqlx::postgres::PgRow>) -> (Vec<ColumnMetadata>, Vec<Vec<serde_json::Value>>) {
+    let columns: Vec<ColumnMetadata> = if rows.is_empty() {
+        vec![]
+    } else {
+        rows[0]
+            .columns()
+            .iter()
+            .enumerate()
+            .map(|(i, col)| ColumnMetadata {
+                name: col.name().to_string(),
+                data_type: "unknown".to_string(),
+                ordinal: i as i32,
+            })
+            .collect()
+    };
+
+    let result_rows: Vec<Vec<serde_json::Value>> = rows
+        .iter()
+        .map(|row| {
+            (0..row.columns().len())
+                .map(|i| {
+                    row.try_get::<serde_json::Value, _>(i)
+                        .unwrap_or(serde_json::Value::Null)
+                })
+                .collect()
+        })
+        .collect();
+
+    (columns, result_rows)
+}
+
+/// 从 MySQL 行提取列和数据
+#[allow(dead_code)]
+fn extract_mysql_rows_data(rows: Vec<sqlx::mysql::MySqlRow>) -> (Vec<ColumnMetadata>, Vec<Vec<serde_json::Value>>) {
+    let columns: Vec<ColumnMetadata> = if rows.is_empty() {
+        vec![]
+    } else {
+        rows[0]
+            .columns()
+            .iter()
+            .enumerate()
+            .map(|(i, col)| ColumnMetadata {
+                name: col.name().to_string(),
+                data_type: "unknown".to_string(),
+                ordinal: i as i32,
+            })
+            .collect()
+    };
+
+    let result_rows: Vec<Vec<serde_json::Value>> = rows
+        .iter()
+        .map(|row| {
+            (0..row.columns().len())
+                .map(|i| {
+                    row.try_get::<serde_json::Value, _>(i)
+                        .unwrap_or(serde_json::Value::Null)
+                })
+                .collect()
+        })
+        .collect();
+
+    (columns, result_rows)
+}
+
+/// 从文本中提取 SQL 语句
+fn extract_sql_from_text(text: &str) -> Option<String> {
+    // 尝试提取 ```sql ... ``` 块
+    let re = regex::Regex::new(r"```sql\s*([\s\S]*?)\s*```").ok()?;
+    if let Some(caps) = re.captures(text) {
+        if let Some(sql_match) = caps.get(1) {
+            return Some(sql_match.as_str().trim().to_string());
+        }
+    }
+
+    // 尝试提取 ``` ... ``` 块
+    let re = regex::Regex::new(r"```\s*([\s\S]*?)\s*```").ok()?;
+    if let Some(caps) = re.captures(text) {
+        if let Some(code_match) = caps.get(1) {
+            let content = code_match.as_str().trim();
+            if content.to_uppercase().contains("SELECT") {
+                return Some(content.to_string());
+            }
+        }
+    }
+
+    // 尝试提取 SELECT ... 结尾的语句
+    let re = regex::Regex::new(r"(?i)(SELECT[\s\S]+?)(?:\n\n|$)").ok()?;
+    if let Some(caps) = re.captures(text) {
+        if let Some(sql_match) = caps.get(1) {
+            return Some(sql_match.as_str().trim().to_string());
+        }
+    }
+
+    None
+}
+
 // ==================== 图表处理器 ====================
 
 async fn recommend_chart_handler(
     State(_state): State<Arc<AppState>>,
+    Json(payload): Json<ChartRecommendRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // TODO: 实际应该根据数据特征推荐图表类型
+    let generator = ChartGenerator::new();
+    let recommendation = generator.recommend(&payload.columns, &payload.rows)?;
+
     let response = serde_json::json!({
         "code": 0,
         "message": "Success",
         "data": {
-            "recommended_types": ["bar", "line", "pie"],
-            "reasons": [
-                "数据适合用柱状图展示",
-                "时间序列数据适合用折线图",
-                "比例数据适合用饼图"
-            ]
+            "recommended": recommendation.recommended.as_str(),
+            "recommended_types": recommendation.alternatives.iter().map(|t| t.as_str()).collect::<Vec<_>>(),
+            "reasons": recommendation.reasons,
+            "chart_config": recommendation.chart_config
         }
     });
 
@@ -1131,29 +1405,21 @@ async fn recommend_chart_handler(
 
 async fn generate_chart_handler(
     State(_state): State<Arc<AppState>>,
-    Json(payload): Json<serde_json::Value>,
+    Json(payload): Json<ChartGenerateRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let chart_type = payload
-        .get("chart_type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("bar");
+    let generator = ChartGenerator::new();
+    let config = generator.switch_chart_type(
+        &payload.columns,
+        &payload.rows,
+        &payload.chart_type,
+    )?;
 
-    // TODO: 实际应该生成 ECharts 配置
     let response = serde_json::json!({
         "code": 0,
         "message": "Success",
         "data": {
-            "chart_type": chart_type,
-            "config": {
-                "title": {"text": "数据图表"},
-                "tooltip": {},
-                "xAxis": {"type": "category", "data": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]},
-                "yAxis": {"type": "value"},
-                "series": [{
-                    "data": [120, 200, 150, 80, 70, 110, 130],
-                    "type": chart_type
-                }]
-            }
+            "chart_type": config.chart_type,
+            "config": config.echarts_config
         }
     });
 
@@ -1162,20 +1428,60 @@ async fn generate_chart_handler(
 
 async fn export_chart_handler(
     State(_state): State<Arc<AppState>>,
-    Json(payload): Json<serde_json::Value>,
+    Json(payload): Json<ChartExportRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let format = payload
-        .get("format")
-        .and_then(|v| v.as_str())
-        .unwrap_or("png");
+    let format = payload.format.as_deref().unwrap_or("json");
+    let filename = payload.filename.as_deref().unwrap_or("chart");
 
-    // TODO: 实际应该导出图表
+    // 生成导出文件路径
+    let export_dir = std::env::temp_dir().join("chart_exports");
+    std::fs::create_dir_all(&export_dir)
+        .map_err(|e| AppError::internal(format!("无法创建导出目录: {}", e)))?;
+
+    let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+    let filename = format!("{}_{}.{}", filename, timestamp, format);
+    let file_path = export_dir.join(&filename);
+
+    match format {
+        "json" => {
+            // 保存为 JSON 文件
+            let json_str = serde_json::to_string_pretty(&payload.config)
+                .map_err(|e| AppError::internal(format!("JSON 序列化失败: {}", e)))?;
+            std::fs::write(&file_path, json_str)
+                .map_err(|e| AppError::internal(format!("写入文件失败: {}", e)))?;
+        }
+        "svg" => {
+            // ECharts 支持导出 SVG
+            if let Some(svg_data) = payload.config.get("svg") {
+                let svg_str = svg_data.as_str()
+                    .ok_or_else(|| AppError::ValidationError("无效的 SVG 数据".to_string()))?;
+                std::fs::write(&file_path, svg_str)
+                    .map_err(|e| AppError::internal(format!("写入 SVG 失败: {}", e)))?;
+            } else {
+                // 如果没有 SVG，返回 JSON 配置
+                let json_str = serde_json::to_string_pretty(&payload.config)
+                    .map_err(|e| AppError::internal(format!("JSON 序列化失败: {}", e)))?;
+                std::fs::write(&file_path, json_str)
+                    .map_err(|e| AppError::internal(format!("写入文件失败: {}", e)))?;
+            }
+        }
+        _ => {
+            // 其他格式，返回 JSON 配置
+            let json_str = serde_json::to_string_pretty(&payload.config)
+                .map_err(|e| AppError::internal(format!("JSON 序列化失败: {}", e)))?;
+            std::fs::write(&file_path, json_str)
+                .map_err(|e| AppError::internal(format!("写入文件失败: {}", e)))?;
+        }
+    }
+
     let response = serde_json::json!({
         "code": 0,
         "message": "导出成功",
         "data": {
             "format": format,
-            "url": format!("/exports/chart.{}", format)
+            "filename": filename,
+            "url": format!("/exports/{}", filename),
+            "path": file_path.to_string_lossy()
         }
     });
 
@@ -1186,16 +1492,39 @@ async fn export_chart_handler(
 
 async fn list_metrics_handler(
     State(_state): State<Arc<AppState>>,
+    Query(params): Query<MetricListRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // TODO: 实际应该从数据库查询指标列表
+    let store = METRICS_STORE.read()
+        .map_err(|_| AppError::internal("无法读取指标存储".to_string()))?;
+
+    let page = params.page.max(1);
+    let page_size = params.page_size.max(1).min(100);
+
+    let mut items: Vec<&Metric> = store.values().collect();
+
+    // 过滤
+    if let Some(query) = &params.query {
+        let query_lower = query.to_lowercase();
+        items.retain(|m| {
+            m.name.to_lowercase().contains(&query_lower)
+                || m.code.to_lowercase().contains(&query_lower)
+        });
+    }
+
+    // 分页
+    let total = items.len() as i64;
+    let start = ((page - 1) * page_size) as usize;
+    let _end = (start + page_size as usize).min(items.len());
+    items = items.into_iter().skip(start).take(page_size as usize).collect();
+
     let response = serde_json::json!({
         "code": 0,
         "message": "Success",
         "data": {
-            "items": [],
-            "total": 0,
-            "page": 1,
-            "page_size": 20
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size
         }
     });
 
@@ -1234,23 +1563,16 @@ async fn get_metric_handler(
     State(_state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // TODO: 实际应该从数据库查询
+    let store = METRICS_STORE.read()
+        .map_err(|_| AppError::internal("无法读取指标存储".to_string()))?;
+
+    let metric = store.get(&id)
+        .ok_or_else(|| AppError::NotFound("指标不存在".to_string()))?;
+
     let response = serde_json::json!({
         "code": 0,
         "message": "Success",
-        "data": {
-            "id": id,
-            "name": "示例指标",
-            "code": "example_metric",
-            "expression": "SELECT COUNT(*) FROM users",
-            "description": null,
-            "dimensions": null,
-            "unit": null,
-            "format_type": "number",
-            "created_by": null,
-            "created_at": chrono::Utc::now(),
-            "updated_at": chrono::Utc::now()
-        }
+        "data": metric
     });
 
     Ok(Json(response))
@@ -1286,30 +1608,107 @@ async fn delete_metric_handler(
 }
 
 async fn execute_metric_handler(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // TODO: 实际应该执行指标计算
+    // 获取指标
+    let metric = {
+        let store = METRICS_STORE.read()
+            .map_err(|_| AppError::internal("无法读取指标存储".to_string()))?;
+        store.get(&id)
+            .ok_or_else(|| AppError::NotFound("指标不存在".to_string()))?
+            .clone()
+    };
+
+    let start = std::time::Instant::now();
+
+    // 解析参数
+    let connection_id = payload.get("connection_id")
+        .and_then(|v| v.as_str())
+        .and_then(|s| Uuid::parse_str(s).ok());
+
+    let dimensions: std::collections::HashMap<String, String> = payload.get("dimensions")
+        .and_then(|v| v.as_object())
+        .map(|obj| {
+            obj.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // 执行指标表达式
+    let mut value: serde_json::Value = serde_json::Value::Null;
+    let mut error_message: Option<String> = None;
+
+    if let Some(conn_id) = connection_id {
+        if let Ok(config) = get_connection_config(&state, conn_id).await {
+            if let Ok(pool_type) = state.connection_manager.get_pool(&config).await {
+                // 替换维度参数
+                let mut sql = metric.expression.clone();
+                for (key, val) in &dimensions {
+                    sql = sql.replace(&format!("{{{}}}", key), val);
+                }
+
+                let result = match pool_type {
+                    ConnectionPool::Postgres(pg_pool) => {
+                        sqlx::query_as::<_, (serde_json::Value,)>(&sql)
+                            .fetch_one(&pg_pool)
+                            .await
+                    }
+                    ConnectionPool::Mysql(mysql_pool) => {
+                        sqlx::query_as::<_, (serde_json::Value,)>(&sql)
+                            .fetch_one(&mysql_pool)
+                            .await
+                    }
+                };
+
+                match result {
+                    Ok((v,)) => value = v,
+                    Err(e) => error_message = Some(format!("执行失败: {}", e)),
+                }
+            }
+        }
+    }
+
+    let duration_ms = start.elapsed().as_millis() as i64;
+
+    // 格式化值
+    let formatted_value = match &value {
+        serde_json::Value::Number(n) => {
+            match metric.format_type {
+                FormatType::Percent => format!("{:.2}%", n.as_f64().unwrap_or(0.0) * 100.0),
+                FormatType::Currency => format!("¥{:.2}", n.as_f64().unwrap_or(0.0)),
+                _ => {
+                    if let Some(i) = n.as_i64() {
+                        format!("{}", i)
+                    } else {
+                        format!("{:.2}", n.as_f64().unwrap_or(0.0))
+                    }
+                }
+            }
+        }
+        _ => value.to_string(),
+    };
+
     let response = serde_json::json!({
         "code": 0,
-        "message": "Success",
+        "message": if error_message.is_some() { "执行失败" } else { "Success" },
         "data": {
             "metric": {
-                "id": id,
-                "name": "示例指标",
-                "code": "example_metric",
-                "value": 1000,
-                "formatted_value": "1,000",
-                "unit": "人",
-                "dimensions": null
+                "id": metric.id,
+                "name": metric.name,
+                "code": metric.code,
+                "value": value,
+                "formatted_value": formatted_value,
+                "unit": metric.unit,
+                "dimensions": dimensions
             },
-            "duration_ms": 50,
-            "executed_at": chrono::Utc::now()
+            "duration_ms": duration_ms,
+            "executed_at": chrono::Utc::now(),
+            "error": error_message
         }
     });
-
-    let _ = payload;
 
     Ok(Json(response))
 }
@@ -1318,21 +1717,110 @@ async fn get_metric_lineage_handler(
     State(_state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // TODO: 实际应该分析指标血缘
+    // 获取指标
+    let metric = {
+        let store = METRICS_STORE.read()
+            .map_err(|_| AppError::internal("无法读取指标存储".to_string()))?;
+        store.get(&id)
+            .ok_or_else(|| AppError::NotFound("指标不存在".to_string()))?
+            .clone()
+    };
+
+    // 解析 SQL 提取表名和列名
+    let (source_tables, source_columns) = analyze_sql_lineage(&metric.expression);
+
+    // 查找依赖的指标
+    let dependent_metrics = {
+        let store = METRICS_STORE.read()
+            .map_err(|_| AppError::internal("无法读取指标存储".to_string()))?;
+        store.values()
+            .filter(|m| m.id != metric.id)
+            .filter(|m| {
+                // 检查其他指标是否引用了当前指标
+                source_tables.iter().any(|t| m.expression.contains(t))
+            })
+            .map(|m| serde_json::json!({
+                "id": m.id,
+                "name": m.name,
+                "code": m.code
+            }))
+            .collect::<Vec<_>>()
+    };
+
+    // 查找引用当前指标的指标
+    let referenced_by = {
+        let store = METRICS_STORE.read()
+            .map_err(|_| AppError::internal("无法读取指标存储".to_string()))?;
+        store.values()
+            .filter(|m| m.id != metric.id)
+            .filter(|m| m.expression.contains(&metric.code))
+            .map(|m| serde_json::json!({
+                "id": m.id,
+                "name": m.name,
+                "code": m.code
+            }))
+            .collect::<Vec<_>>()
+    };
+
     let response = serde_json::json!({
         "code": 0,
         "message": "Success",
         "data": {
-            "metric_id": id,
-            "metric_name": "示例指标",
-            "source_tables": ["users", "orders"],
-            "source_columns": ["users.id", "orders.user_id"],
-            "dependent_metrics": [],
-            "referenced_by": []
+            "metric_id": metric.id,
+            "metric_name": metric.name,
+            "metric_code": metric.code,
+            "source_tables": source_tables,
+            "source_columns": source_columns,
+            "dependent_metrics": dependent_metrics,
+            "referenced_by": referenced_by
         }
     });
 
     Ok(Json(response))
+}
+
+/// 分析 SQL 语句提取血缘信息
+fn analyze_sql_lineage(sql: &str) -> (Vec<String>, Vec<String>) {
+    use regex::Regex;
+
+    let mut tables = Vec::new();
+    let mut columns = Vec::new();
+
+    // 提取 FROM 和 JOIN 后面的表名
+    let table_regex = Regex::new(r"(?i)(?:FROM|JOIN)\s+([a-zA-Z_][a-zA-Z0-9_]*)").unwrap();
+    for cap in table_regex.captures_iter(sql) {
+        if let Some(table) = cap.get(1) {
+            let table_name = table.as_str().to_string();
+            if !tables.contains(&table_name) {
+                tables.push(table_name);
+            }
+        }
+    }
+
+    // 提取 SELECT 后的列名
+    let column_regex = Regex::new(r"(?i)SELECT\s+(.*?)\s+FROM").unwrap();
+    if let Some(cap) = column_regex.captures(sql) {
+        if let Some(cols_str) = cap.get(1) {
+            // 分割可能的多个列
+            let cols = cols_str.as_str().split(',');
+            for col in cols {
+                let col = col.trim();
+                // 提取别名或完整列名
+                let col_name = if col.contains(" as ") {
+                    col.split(" as ").nth(1).unwrap_or(col).trim().to_string()
+                } else if col.contains('.') {
+                    col.split('.').last().unwrap_or(col).trim().to_string()
+                } else {
+                    col.to_string()
+                };
+                if !col_name.is_empty() && col_name != "*" {
+                    columns.push(col_name);
+                }
+            }
+        }
+    }
+
+    (tables, columns)
 }
 
 // ==================== 工具函数 ====================

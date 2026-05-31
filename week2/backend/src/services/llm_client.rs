@@ -119,8 +119,8 @@ Schema 信息：
         Ok(response)
     }
 
-    /// 调用 LLM
-    async fn call_llm(&self, prompt: &str, model: &str) -> AppResult<String> {
+    /// 调用 LLM (公开接口)
+    pub async fn call_llm(&self, prompt: &str, model: &str) -> AppResult<String> {
         let api_key = &self.config.openai.api_key;
         let base_url = &self.config.openai.base_url;
 
