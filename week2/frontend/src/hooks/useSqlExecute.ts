@@ -6,6 +6,9 @@ export interface SqlExecuteResult {
   columns: Array<{ name: string; data_type: string }>;
   rows: unknown[][];
   row_count: number;
+  total: number;
+  page: number;
+  page_size: number;
   duration_ms: number;
 }
 
@@ -13,6 +16,8 @@ export interface SqlExecuteRequest {
   connection_id: string;
   sql: string;
   timeout?: number;
+  page?: number;
+  page_size?: number;
 }
 
 export function useSqlExecute() {

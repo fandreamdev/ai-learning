@@ -109,12 +109,15 @@
 | OpenAI 兼容响应解析 | ✅ 已完成 | `LlmClient` 已兼容 OpenAI chat completions 响应结构，支持字符串和分段 content |
 | ClickHouse 最小链路 | ✅ 已完成 | 已通过 ClickHouse HTTP 接口支持连接测试、Schema 获取、SELECT 执行、预览、EXPLAIN、指标执行和 SQL 格式化 |
 | PNG 图表导出 | ✅ 已完成 | `/charts/export` 已支持写入前端传入的 PNG data URL/base64 |
+| 图表推荐接口兼容 | ✅ 已完成 | `/charts/recommend` 保留 POST 请求体推荐，并新增 GET 查询入口兼容文档接口形态 |
 | 运行时 Mock 清理 | ✅ 已完成 | 未接入备用对话模块不再在 LLM 失败时返回模拟 SQL；运行时源码未发现 mock/模拟返回 |
 | 审计日志查询 API | ✅ 已完成 | 已新增 `/api/v1/audit-logs` 管理员分页查询和搜索，并接入前端审计页 |
 | 语义层 API | ✅ 已完成 | 已新增 `/api/v1/semantics` 列表、创建、更新、删除、批量创建和统计接口 |
 | SQL 工作区 Schema | ✅ 已完成 | SQL 页面选择连接后已调用 `/connections/{id}/schema` 展示真实表结构 |
 | SQL 结果导出 | ✅ 已完成 | SQL 页面已支持当前结果 CSV/JSON 浏览器导出 |
+| SQL 执行分页 | ✅ 已完成 | `/sql/execute` 已支持可选 `page/page_size`，响应包含 `total/page/page_size`，未传分页参数时保持完整结果兼容 |
 | SQL 优化建议 | ✅ 已完成 | `/sql/explain` 已返回基础 `warnings` 和 `suggestions` |
+| 连接更新调用链 | ✅ 已完成 | 连接编辑弹窗已接入 `PUT /connections/{id}`，编辑时密码留空不会覆盖原密码 |
 | 通用组件 | ✅ 已完成 | 已创建 `Common/Button`、`Common/Modal`、`Common/Table` 并通过构建 |
 | SQL 编辑器封装 | ✅ 已完成 | 已创建 `components/Editor/SqlEditor.tsx` 并通过构建 |
 | 角色管理页面 | ✅ 已完成 | 已创建 `pages/Admin/RoleManagement.tsx` 并通过构建 |

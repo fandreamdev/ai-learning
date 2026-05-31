@@ -55,6 +55,13 @@ struct ChartRecommendRequest {
     rows: Vec<Vec<serde_json::Value>>,
 }
 
+/// 图表推荐查询请求
+#[derive(Debug, serde::Deserialize)]
+struct ChartRecommendQuery {
+    connection_id: Uuid,
+    sql: String,
+}
+
 /// 图表生成请求
 #[derive(Debug, serde::Deserialize)]
 struct ChartGenerateRequest {
@@ -210,6 +217,7 @@ fn conversation_routes() -> Router<Arc<AppState>> {
 
 fn chart_routes() -> Router<Arc<AppState>> {
     Router::new()
+        .route("/recommend", get(recommend_chart_from_query_handler))
         .route("/recommend", post(recommend_chart_handler))
         .route("/generate", post(generate_chart_handler))
         .route("/export", post(export_chart_handler))
@@ -1219,6 +1227,12 @@ async fn execute_sql_handler(
         }
     };
     let rows = mask_result_rows(&columns, rows);
+    let total = rows.len() as i64;
+    let (response_rows, page, page_size) = paginate_sql_rows(
+        rows,
+        payload.page,
+        payload.page_size,
+    );
     let execution_plan = if payload.explain {
         Some(build_execution_plan(&pool, &payload.sql).await?)
     } else {
@@ -1226,8 +1240,8 @@ async fn execute_sql_handler(
     };
 
     let duration_ms = start.elapsed().as_millis() as i64;
-    let row_count = rows.len() as i64;
-    history.mark_success(duration_ms, row_count);
+    let row_count = response_rows.len() as i64;
+    history.mark_success(duration_ms, total);
     let history = query_repo(&state).create(&history).await.unwrap_or(history);
     write_audit(
         &state,
@@ -1235,7 +1249,7 @@ async fn execute_sql_handler(
         "sql.execute",
         Some("query_history"),
         Some(history.id.to_string()),
-        serde_json::json!({"connection_id": payload.connection_id, "row_count": row_count, "duration_ms": duration_ms}),
+        serde_json::json!({"connection_id": payload.connection_id, "row_count": total, "duration_ms": duration_ms}),
     )
     .await;
 
@@ -1245,12 +1259,37 @@ async fn execute_sql_handler(
         "data": {
             "query_id": history.id,
             "columns": columns,
-            "rows": rows,
+            "rows": response_rows,
             "row_count": row_count,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
             "duration_ms": duration_ms,
             "execution_plan": execution_plan
         }
     })))
+}
+
+fn paginate_sql_rows(
+    rows: Vec<Vec<serde_json::Value>>,
+    page: Option<i32>,
+    page_size: Option<i32>,
+) -> (Vec<Vec<serde_json::Value>>, i32, i32) {
+    if page.is_none() && page_size.is_none() {
+        let page_size = rows.len().min(i32::MAX as usize) as i32;
+        return (rows, 1, page_size.max(1));
+    }
+
+    let page = page.unwrap_or(1).max(1);
+    let page_size = page_size.unwrap_or(50).clamp(1, 1000);
+    let offset = ((page - 1) as usize).saturating_mul(page_size as usize);
+    let paged_rows = rows
+        .into_iter()
+        .skip(offset)
+        .take(page_size as usize)
+        .collect();
+
+    (paged_rows, page, page_size)
 }
 
 /// 执行 SQL 查询并返回结果 (暂未使用，作为备用)
@@ -2483,10 +2522,30 @@ async fn recommend_chart_handler(
     State(_state): State<Arc<AppState>>,
     Json(payload): Json<ChartRecommendRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let generator = ChartGenerator::new();
-    let recommendation = generator.recommend(&payload.columns, &payload.rows)?;
+    build_chart_recommend_response(&payload.columns, &payload.rows)
+}
 
-    let response = serde_json::json!({
+async fn recommend_chart_from_query_handler(
+    State(state): State<Arc<AppState>>,
+    Extension(session): Extension<UserSession>,
+    Query(params): Query<ChartRecommendQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let config = get_connection_config_for_session(&state, params.connection_id, &session).await?;
+    let pool = state.connection_manager.get_pool(&config).await?;
+    let (columns, rows) = sql_execute(&state, &pool, &params.sql, &config.db_type).await?;
+    let rows = mask_result_rows(&columns, rows);
+
+    build_chart_recommend_response(&columns, &rows)
+}
+
+fn build_chart_recommend_response(
+    columns: &[ColumnMetadata],
+    rows: &[Vec<serde_json::Value>],
+) -> Result<Json<serde_json::Value>, AppError> {
+    let generator = ChartGenerator::new();
+    let recommendation = generator.recommend(columns, rows)?;
+
+    Ok(Json(serde_json::json!({
         "code": 0,
         "message": "Success",
         "data": {
@@ -2495,9 +2554,7 @@ async fn recommend_chart_handler(
             "reasons": recommendation.reasons,
             "chart_config": recommendation.chart_config
         }
-    });
-
-    Ok(Json(response))
+    })))
 }
 
 async fn generate_chart_handler(
@@ -2837,7 +2894,7 @@ async fn execute_metric_handler(
     let mut sql = metric.expression.clone();
     for (key, val) in &dimensions {
         validate_metric_dimension_value(key, val)?;
-        sql = sql.replace(&format!("{{{}}}", key), val);
+        sql = sql.replace(&format!("{{{}}}", key), &metric_dimension_sql_literal(val));
     }
     validate_select_sql(&state, &sql)?;
 
@@ -2940,18 +2997,25 @@ async fn get_metric_lineage_handler(
     let source_columns = analysis.referenced_columns;
     let metrics = repo.list_all().await?;
 
+    let referenced_metric_codes = metrics
+        .iter()
+        .filter(|m| m.id != metric.id)
+        .filter(|m| metric.expression.contains(&m.code))
+        .collect::<Vec<_>>();
+
     // 查找依赖的指标
     let dependent_metrics = metrics
         .iter()
         .filter(|m| m.id != metric.id)
         .filter(|m| {
-            // 检查其他指标是否引用了当前指标
-            source_tables.iter().any(|t| m.expression.contains(t))
+            metric.expression.contains(&m.code)
+                || source_tables.iter().any(|t| m.expression.contains(t))
         })
         .map(|m| serde_json::json!({
             "id": m.id,
             "name": m.name,
-            "code": m.code
+            "code": m.code,
+            "updated_at": m.updated_at
         }))
         .collect::<Vec<_>>();
 
@@ -2963,9 +3027,77 @@ async fn get_metric_lineage_handler(
         .map(|m| serde_json::json!({
             "id": m.id,
             "name": m.name,
-            "code": m.code
+            "code": m.code,
+            "updated_at": m.updated_at
         }))
         .collect::<Vec<_>>();
+
+    let mut nodes = vec![serde_json::json!({
+        "id": metric.id.to_string(),
+        "label": metric.name,
+        "code": metric.code,
+        "type": "metric",
+        "version": metric.updated_at
+    })];
+    let mut edges = Vec::new();
+
+    for table in &source_tables {
+        let table_id = format!("table:{}", table);
+        nodes.push(serde_json::json!({
+            "id": table_id,
+            "label": table,
+            "type": "table"
+        }));
+        edges.push(serde_json::json!({
+            "from": table_id,
+            "to": metric.id.to_string(),
+            "type": "source_table"
+        }));
+    }
+
+    for column in &source_columns {
+        let column_id = format!("column:{}", column);
+        nodes.push(serde_json::json!({
+            "id": column_id,
+            "label": column,
+            "type": "column"
+        }));
+        edges.push(serde_json::json!({
+            "from": column_id,
+            "to": metric.id.to_string(),
+            "type": "source_column"
+        }));
+    }
+
+    for dependency in referenced_metric_codes {
+        nodes.push(serde_json::json!({
+            "id": dependency.id.to_string(),
+            "label": dependency.name,
+            "code": dependency.code,
+            "type": "metric",
+            "version": dependency.updated_at
+        }));
+        edges.push(serde_json::json!({
+            "from": dependency.id.to_string(),
+            "to": metric.id.to_string(),
+            "type": "metric_dependency"
+        }));
+    }
+
+    for other in metrics.iter().filter(|m| m.id != metric.id && m.expression.contains(&metric.code)) {
+        nodes.push(serde_json::json!({
+            "id": other.id.to_string(),
+            "label": other.name,
+            "code": other.code,
+            "type": "metric",
+            "version": other.updated_at
+        }));
+        edges.push(serde_json::json!({
+            "from": metric.id.to_string(),
+            "to": other.id.to_string(),
+            "type": "referenced_by"
+        }));
+    }
 
     let response = serde_json::json!({
         "code": 0,
@@ -2974,10 +3106,15 @@ async fn get_metric_lineage_handler(
             "metric_id": metric.id,
             "metric_name": metric.name,
             "metric_code": metric.code,
+            "version": metric.updated_at,
             "source_tables": source_tables,
             "source_columns": source_columns,
             "dependent_metrics": dependent_metrics,
-            "referenced_by": referenced_by
+            "referenced_by": referenced_by,
+            "lineage_graph": {
+                "nodes": nodes,
+                "edges": edges
+            }
         }
     });
 
@@ -3004,6 +3141,18 @@ fn validate_metric_dimension_value(key: &str, value: &str) -> AppResult<()> {
     }
 
     Ok(())
+}
+
+fn metric_dimension_sql_literal(value: &str) -> String {
+    if value.parse::<i64>().is_ok() || value.parse::<f64>().is_ok() {
+        return value.to_string();
+    }
+
+    match value.to_ascii_lowercase().as_str() {
+        "true" => "TRUE".to_string(),
+        "false" => "FALSE".to_string(),
+        _ => format!("'{}'", value.replace('\'', "''")),
+    }
 }
 
 fn base64_encode_bytes(input: &[u8]) -> String {

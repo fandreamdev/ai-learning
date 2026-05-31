@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Plus, Edit2, Trash2, CheckCircle, XCircle, Database, RefreshCw, Settings } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useConnectionStore } from '@/stores/connectionStore';
-import type { Connection, CreateConnectionRequest, DatabaseType } from '@/types/api';
+import type { Connection, CreateConnectionRequest, DatabaseType, UpdateConnectionRequest } from '@/types/api';
 
 // 数据库类型选项
 const DATABASE_TYPES: { value: DatabaseType; label: string; icon: string }[] = [
@@ -173,7 +173,19 @@ export function ConnectionPanel({ onConnectionSelect, compact = false }: Connect
           onSave={async (data) => {
             try {
               if (editingConnection) {
-                await updateConnection(editingConnection.id, data);
+                const updateData: UpdateConnectionRequest = {
+                  name: data.name,
+                  db_type: data.db_type,
+                  host: data.host,
+                  port: data.port,
+                  database_name: data.database_name,
+                  username: data.username,
+                  is_default: data.is_default,
+                };
+                if (data.password) {
+                  updateData.password = data.password;
+                }
+                await updateConnection(editingConnection.id, updateData);
                 toast.success('连接已更新');
               } else {
                 await createConnection(data);

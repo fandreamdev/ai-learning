@@ -116,6 +116,14 @@ pub struct SqlExecuteRequest {
     /// 是否返回执行计划
     #[serde(default)]
     pub explain: bool,
+
+    /// 结果页码。为空时保持兼容，返回完整结果。
+    #[serde(default)]
+    pub page: Option<i32>,
+
+    /// 每页行数。为空时保持兼容，返回完整结果。
+    #[serde(default)]
+    pub page_size: Option<i32>,
 }
 
 /// SQL 格式化请求
@@ -146,6 +154,15 @@ pub struct SqlExecuteResponse {
 
     /// 返回行数
     pub row_count: i64,
+
+    /// 总行数
+    pub total: i64,
+
+    /// 当前页码
+    pub page: i32,
+
+    /// 每页行数
+    pub page_size: i32,
 
     /// 执行耗时 (毫秒)
     pub duration_ms: i64,

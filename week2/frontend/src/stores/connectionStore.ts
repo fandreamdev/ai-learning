@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { DatabaseConnection } from '@/types/api'
-import type { CreateConnectionRequest } from '@/types/api'
+import type { CreateConnectionRequest, UpdateConnectionRequest } from '@/types/api'
 import { api } from '@/api/client'
 
 interface ConnectionState {
@@ -12,7 +12,7 @@ interface ConnectionState {
   setConnections: (connections: DatabaseConnection[]) => void
   setCurrentConnection: (id: string | null) => void
   addConnection: (connection: DatabaseConnection) => void
-  updateConnection: (id: string, connection: Partial<DatabaseConnection>) => void
+  updateConnection: (id: string, request: UpdateConnectionRequest) => Promise<void>
   removeConnection: (id: string) => void
   fetchConnections: () => Promise<void>
   createConnection: (request: CreateConnectionRequest) => Promise<void>
@@ -36,12 +36,17 @@ export const useConnectionStore = create<ConnectionState>()((set) => ({
       connections: [...state.connections, connection],
     })),
 
-  updateConnection: (id, updates) =>
-    set((state) => ({
-      connections: state.connections.map((conn) =>
-        conn.id === id ? { ...conn, ...updates } : conn
-      ),
-    })),
+  updateConnection: async (id, request) => {
+    const response = await api.put(`/connections/${id}`, request)
+    const connection = response.data?.data
+    if (connection) {
+      set((state) => ({
+        connections: state.connections.map((conn) =>
+          conn.id === id ? connection : conn
+        ),
+      }))
+    }
+  },
 
   removeConnection: (id) =>
     set((state) => ({

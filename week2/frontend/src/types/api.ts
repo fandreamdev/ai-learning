@@ -50,6 +50,8 @@ export interface CreateConnectionRequest {
   is_default?: boolean
 }
 
+export type UpdateConnectionRequest = Partial<CreateConnectionRequest>
+
 export type DatabaseType = 'mysql' | 'postgresql' | 'clickhouse' | 'sqlite'
 
 export interface SqlExecuteRequest {
@@ -57,6 +59,8 @@ export interface SqlExecuteRequest {
   sql: string
   timeout?: number
   explain?: boolean
+  page?: number
+  page_size?: number
 }
 
 export interface SqlExecuteResponse {
@@ -64,6 +68,9 @@ export interface SqlExecuteResponse {
   columns: ColumnMetadata[]
   rows: unknown[][]
   row_count: number
+  total: number
+  page: number
+  page_size: number
   duration_ms: number
   execution_plan?: ExecutionPlan
 }

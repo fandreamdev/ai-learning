@@ -126,6 +126,9 @@ impl SqlExecutor {
             columns,
             rows,
             row_count,
+            total: row_count,
+            page: 1,
+            page_size: row_count.max(1).min(i32::MAX as i64) as i32,
             duration_ms,
             execution_plan: None,
         })

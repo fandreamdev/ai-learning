@@ -77,7 +77,7 @@ export function useChart() {
 
   const exportChart = useCallback(async (
     chartConfig: Record<string, unknown>,
-    format: 'json' | 'svg' = 'svg'
+    format: 'json' | 'svg' | 'png' = 'svg'
   ) => {
     setLoading(true);
     setError(null);
