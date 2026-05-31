@@ -266,7 +266,7 @@ pub struct TestConnectionResponse {
     pub success: bool,
     pub message: String,
     pub server_version: Option<String>,
-    pub latency_ms: Option<u64>,
+    pub latency_ms: Option<i64>,
 }
 
 /// 表结构信息

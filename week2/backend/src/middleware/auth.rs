@@ -104,22 +104,25 @@ pub async fn optional_auth_middleware(
 /// 角色检查中间件工厂
 ///
 /// 创建一个检查用户角色的中间件
-pub fn require_role(required_role: UserRole) -> impl Fn(State<Arc<AppState>>, Request, Next) -> Result<Response, AppError> {
-    move |State(state): State<Arc<AppState>>, request: Request, next: Next| async move {
-        let session = request
-            .extensions()
-            .get::<UserSession>()
-            .ok_or_else(|| AppError::Unauthorized("Authentication required".to_string()))?;
+pub fn require_role(required_role: UserRole) -> impl Fn(State<Arc<AppState>>, Request, Next) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Response, AppError>> + Send>> {
+    move |State(state): State<Arc<AppState>>, request: Request, next: Next| {
+        let required_role = required_role.clone();
+        Box::pin(async move {
+            let session = request
+                .extensions()
+                .get::<UserSession>()
+                .ok_or_else(|| AppError::Unauthorized("Authentication required".to_string()))?;
 
-        // 检查角色权限
-        if !has_permission(&session.role, &required_role) {
-            return Err(AppError::Forbidden(format!(
-                "Requires {} role, but user has {} role",
-                required_role, session.role
-            )));
-        }
+            // 检查角色权限
+            if !has_permission(&session.role, &required_role) {
+                return Err(AppError::Forbidden(format!(
+                    "Requires {} role, but user has {} role",
+                    required_role, session.role
+                )));
+            }
 
-        Ok(next.run(request).await)
+            Ok(next.run(request).await)
+        })
     }
 }
 

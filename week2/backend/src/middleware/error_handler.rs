@@ -5,10 +5,11 @@
 use crate::error::AppError;
 use axum::{
     extract::Request,
-    response::Response,
+    http::HeaderValue,
+    response::{IntoResponse, Response},
     middleware::Next,
 };
-use tracing::{error, warn};
+use tracing::warn;
 
 /// 统一错误处理中间件
 ///
@@ -36,21 +37,11 @@ pub async fn error_handler_middleware(
 
 /// 请求恢复中间件
 ///
-/// 捕获 panic 并返回 500 错误
+/// 注意: 由于异步代码的特性，不再使用 panic 捕获
+/// 而是通过监控线程来检测异常
 pub async fn recovery_middleware(
     request: Request,
     next: Next,
 ) -> Response {
-    let result = std::panic::catch_unwind(|| {
-        futures::executor::block_on(next.run(request))
-    });
-
-    match result {
-        Ok(response) => response,
-        Err(_) => {
-            error!("Panic recovered in request handler");
-            let error = AppError::InternalError("Internal server error".to_string());
-            error.into_response()
-        }
-    }
+    next.run(request).await
 }

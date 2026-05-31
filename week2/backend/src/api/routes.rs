@@ -3,27 +3,33 @@
 //! 定义所有 API 端点
 
 use axum::{
-    extract::{Path, State},
-    http::HeaderMap,
+    extract::{Extension, Path, State},
     routing::{delete, get, post, put},
     Json, Router,
 };
 use std::sync::Arc;
 use uuid::Uuid;
+use chrono::Utc;
+use sqlx::{PgPool, MySqlPool, Row};
 
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    ChangePasswordRequest, ColumnMetadata, ConnectionPublic, CreateConnectionRequest,
+    ChangePasswordRequest, ColumnMetadata, ConnectionPublic, Conversation, CreateConnectionRequest,
     CreateConversationRequest, CreateMetricRequest, CreateUserRequest, DatabaseConnection,
     DatabaseType, LoginRequest, Message, Metric, NlExecuteRequest, NlToSqlRequest,
     QueryHistory, QueryHistoryItem, SqlExecuteRequest, SqlFormatRequest,
-    UpdateConnectionRequest, UpdateConversationRequest, UpdateMetricRequest,
-    UpdateUserRequest, User, UserPublic, UserRole, Conversation,
+    UpdateConnectionRequest, UpdateMetricRequest,
+    UpdateUserRequest, User, UserPublic, UserSession,
 };
 use crate::repositories::{ConnectionRepo, ConversationRepo, QueryRepo, UserRepo};
-use crate::services::connection_manager::ConnectionConfig;
-use crate::services::SqlExecutor;
+use crate::services::connection_manager::{ConnectionConfig, ConnectionPool};
 use crate::state::AppState;
+
+// ==================== 指标存储 ====================
+lazy_static::lazy_static! {
+    static ref METRICS_STORE: std::sync::RwLock<std::collections::HashMap<Uuid, Metric>> =
+        std::sync::RwLock::new(std::collections::HashMap::new());
+}
 
 // ==================== API 响应格式 ====================
 
@@ -126,12 +132,13 @@ fn connection_routes() -> Router<Arc<AppState>> {
 // ==================== SQL 路由 ====================
 
 fn sql_routes() -> Router<Arc<AppState>> {
-    Router::new()
+    let router: Router<Arc<AppState>> = Router::new()
         .route("/execute", post(execute_sql_handler))
         .route("/format", post(format_sql_handler))
         .route("/history", get(get_query_history_handler))
         .route("/explain", post(explain_sql_handler))
-        .route("/preview", post(preview_data_handler))
+        .route("/preview", post(preview_data_handler));
+    router
 }
 
 // ==================== NL 路由 ====================
@@ -477,10 +484,10 @@ async fn change_password_handler(
 
 async fn list_connections_handler(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(session): Extension<UserSession>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let repo = connection_repo(&state);
-    let user_id = get_user_id(&state, headers.get("Authorization").and_then(|v| v.to_str().ok()))?;
+    let user_id = session.user_id;
     let connections = repo.list_by_user(user_id).await?;
 
     let conn_list: Vec<ConnectionPublic> =
@@ -500,11 +507,11 @@ async fn list_connections_handler(
 
 async fn create_connection_handler(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(session): Extension<UserSession>,
     Json(payload): Json<CreateConnectionRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let repo = connection_repo(&state);
-    let user_id = get_user_id(&state, headers.get("Authorization").and_then(|v| v.to_str().ok()))?;
+    let user_id = session.user_id;
 
     // 简单加密密码（实际应该使用更安全的方式）
     let encrypted_password = base64_encode(&payload.password);
@@ -714,10 +721,10 @@ async fn get_schema_handler(
 
 async fn execute_sql_handler(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(session): Extension<UserSession>,
     Json(payload): Json<SqlExecuteRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let user_id = get_user_id(&state, headers.get("Authorization").and_then(|v| v.to_str().ok()))?;
+    let user_id = session.user_id;
 
     // 从连接仓库获取连接配置
     let conn_repo = connection_repo(&state);
@@ -741,9 +748,6 @@ async fn execute_sql_handler(
 
     // 获取数据库连接池
     let db_pool = state.connection_manager.get_pool(&config).await?;
-
-    // 创建 SQL 执行器
-    let executor = SqlExecutor::new(state.config.clone());
 
     // 执行 SQL
     let start = std::time::Instant::now();
@@ -788,21 +792,22 @@ async fn execute_sql_handler(
 
 /// 执行 SQL 查询并返回结果
 async fn sql_execute(
-    pool: &sqlx::Pool<sqlx::any::Any>,
+    pool: &ConnectionPool,
     sql: &str,
     db_type: &DatabaseType,
 ) -> AppResult<(Vec<ColumnMetadata>, Vec<Vec<serde_json::Value>>)> {
     use sqlparser::dialect::{MySqlDialect, PostgreSqlDialect};
     use sqlparser::parser::Parser;
+    use sqlx::Row;
 
     // 解析 SQL
-    let dialect = match db_type {
-        DatabaseType::Postgresql => PostgreSqlDialect {},
-        DatabaseType::Mysql => MySqlDialect {},
+    let dialect: Box<dyn sqlparser::dialect::Dialect> = match db_type {
+        DatabaseType::Postgresql => Box::new(PostgreSqlDialect {}),
+        DatabaseType::Mysql => Box::new(MySqlDialect {}),
         _ => return Err(AppError::validation("不支持的数据库类型".to_string())),
     };
 
-    let ast = Parser::parse_sql(&dialect, sql)
+    let ast = Parser::parse_sql(dialect.as_ref(), sql)
         .map_err(|e| AppError::validation(format!("SQL 解析失败: {}", e)))?
         .into_iter()
         .next()
@@ -814,39 +819,75 @@ async fn sql_execute(
         _ => return Err(AppError::DmlForbidden("只允许执行 SELECT 查询".to_string())),
     }
 
-    // 执行查询
-    let rows = sqlx::query(sql)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| AppError::database(format!("查询执行失败: {}", e)))?;
+    // 根据连接池类型执行查询
+    match pool {
+        ConnectionPool::Postgres(pg_pool) => {
+            let rows = sqlx::query(sql)
+                .fetch_all(pg_pool)
+                .await
+                .map_err(|e| AppError::database(format!("查询执行失败: {}", e)))?;
 
-    // 提取列信息
-    let columns: Vec<ColumnMetadata> = rows
-        .first()
-        .map(|row| {
-            row.columns()
+            // 获取列信息
+            let columns: Vec<ColumnMetadata> = if rows.is_empty() {
+                vec![]
+            } else {
+                let num_cols = rows[0].columns().len();
+                (0..num_cols)
+                    .map(|i| ColumnMetadata {
+                        name: format!("column_{}", i + 1),
+                        data_type: "unknown".to_string(),
+                        ordinal: i as i32,
+                    })
+                    .collect()
+            };
+
+            // 转换为 JSON 值
+            let result_rows: Vec<Vec<serde_json::Value>> = rows
                 .iter()
-                .enumerate()
-                .map(|(i, col)| ColumnMetadata {
-                    name: col.name().to_string(),
-                    data_type: "unknown".to_string(),
-                    ordinal: i as i32,
+                .map(|row| {
+                    let num_cols = row.columns().len();
+                    (0..num_cols)
+                        .map(|i| row.try_get::<serde_json::Value, _>(i).unwrap_or(serde_json::Value::Null))
+                        .collect()
                 })
-                .collect()
-        })
-        .unwrap_or_default();
+                .collect();
 
-    // 转换为 JSON 值
-    let result_rows: Vec<Vec<serde_json::Value>> = rows
-        .iter()
-        .map(|row| {
-            (0..row.columns().len())
-                .map(|i| row.try_get::<serde_json::Value, _>(i).unwrap_or(serde_json::Value::Null))
-                .collect()
-        })
-        .collect();
+            Ok((columns, result_rows))
+        }
+        ConnectionPool::Mysql(mysql_pool) => {
+            let rows = sqlx::query(sql)
+                .fetch_all(mysql_pool)
+                .await
+                .map_err(|e| AppError::database(format!("查询执行失败: {}", e)))?;
 
-    Ok((columns, result_rows))
+            // 获取列信息
+            let columns: Vec<ColumnMetadata> = if rows.is_empty() {
+                vec![]
+            } else {
+                let num_cols = rows[0].columns().len();
+                (0..num_cols)
+                    .map(|i| ColumnMetadata {
+                        name: format!("column_{}", i + 1),
+                        data_type: "unknown".to_string(),
+                        ordinal: i as i32,
+                    })
+                    .collect()
+            };
+
+            // 转换为 JSON 值
+            let result_rows: Vec<Vec<serde_json::Value>> = rows
+                .iter()
+                .map(|row| {
+                    let num_cols = row.columns().len();
+                    (0..num_cols)
+                        .map(|i| row.try_get::<serde_json::Value, _>(i).unwrap_or(serde_json::Value::Null))
+                        .collect()
+                })
+                .collect();
+
+            Ok((columns, result_rows))
+        }
+    }
 }
 
 /// 解码密码
@@ -878,10 +919,10 @@ async fn format_sql_handler(
 
 async fn get_query_history_handler(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(session): Extension<UserSession>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let repo = query_repo(&state);
-    let user_id = get_user_id(&state, headers.get("Authorization").and_then(|v| v.to_str().ok()))?;
+    let user_id = session.user_id;
     let (histories, total) = repo.list_by_user(user_id, 1, 50).await?;
 
     let items: Vec<QueryHistoryItem> = histories
@@ -991,10 +1032,10 @@ async fn nl_convert_handler(
 
 async fn nl_execute_handler(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(session): Extension<UserSession>,
     Json(payload): Json<NlExecuteRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let user_id = get_user_id(&state, headers.get("Authorization").and_then(|v| v.to_str().ok()))?;
+    let user_id = session.user_id;
 
     // 执行 NL 转换并执行 SQL
     let response = serde_json::json!({
@@ -1016,9 +1057,8 @@ async fn nl_execute_handler(
     let mut history = QueryHistory::new(Some(payload.connection_id), user_id, payload.sql);
     history.mark_success(150, 1);
 
-    if let Ok(repo) = Ok(query_repo(&state)) {
-        let _ = repo.create(&history).await;
-    }
+    let repo = query_repo(&state);
+    let _ = repo.create(&history).await;
 
     Ok(Json(response))
 }
@@ -1027,10 +1067,10 @@ async fn nl_execute_handler(
 
 async fn list_conversations_handler(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(session): Extension<UserSession>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let repo = conversation_repo(&state);
-    let user_id = get_user_id(&state, headers.get("Authorization").and_then(|v| v.to_str().ok()))?;
+    let user_id = session.user_id;
     let conversations = repo.list_by_user(user_id).await?;
 
     let response = serde_json::json!({
@@ -1047,11 +1087,11 @@ async fn list_conversations_handler(
 
 async fn create_conversation_handler(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(session): Extension<UserSession>,
     Json(payload): Json<CreateConversationRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let repo = conversation_repo(&state);
-    let user_id = get_user_id(&state, headers.get("Authorization").and_then(|v| v.to_str().ok()))?;
+    let user_id = session.user_id;
 
     let conv = Conversation::new(user_id, payload.title);
     let conv = repo.create_conversation(&conv).await?;
@@ -1263,10 +1303,10 @@ async fn list_metrics_handler(
 
 async fn create_metric_handler(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(session): Extension<UserSession>,
     Json(payload): Json<CreateMetricRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let user_id = get_user_id(&state, headers.get("Authorization").and_then(|v| v.to_str().ok()))?;
+    let user_id = session.user_id;
 
     let mut metric = Metric::new(payload.name, payload.code, payload.expression, Some(user_id));
     if let Some(desc) = payload.description {

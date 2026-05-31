@@ -216,7 +216,6 @@ impl From<sqlx::Error> for AppError {
         tracing::error!("Database error: {:?}", err);
         match err {
             sqlx::Error::RowNotFound => AppError::NotFound("记录不存在".to_string()),
-            sqlx::Error::Timeout(_) => AppError::QueryTimeout("查询超时".to_string()),
             _ => AppError::DatabaseError(err.to_string()),
         }
     }

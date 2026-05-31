@@ -52,7 +52,7 @@ impl AuthService {
             request.role,
         );
 
-        let user = self.user_repo.create(user).await?;
+        let user = self.user_repo.create(&user).await?;
 
         Ok(UserPublic::from(&user))
     }

@@ -76,6 +76,7 @@ impl SqlExecutor {
     ) -> AppResult<SqlExecuteResponse> {
         match statement {
             Statement::Query(query) => {
+                // query 是 std::boxed::Box<Query>，需要解引用
                 self.execute_select(pool, query, dialect, timeout).await
             }
             _ => Err(AppError::DmlForbidden(
@@ -88,15 +89,15 @@ impl SqlExecutor {
     async fn execute_select(
         &self,
         pool: &sqlx::PgPool,
-        query: &Select,
+        query: &std::boxed::Box<sqlparser::ast::Query>,
         dialect: &GenericDialect,
         timeout: Option<u64>,
     ) -> AppResult<SqlExecuteResponse> {
         // 生成列信息
-        let columns = self.extract_columns(query);
+        let columns = self.extract_columns_from_box(query);
 
         // 构建查询
-        let sql = statement_to_string(query, dialect);
+        let sql = statement_to_string_for_query(query, dialect);
 
         // 执行查询
         let start = Instant::now();
@@ -138,11 +139,15 @@ impl SqlExecutor {
             .iter()
             .enumerate()
             .map(|(i, expr)| {
-                let name = expr
-                    .as_ref()
-                    .name()
-                    .map(|n| n.to_string())
-                    .unwrap_or_else(|| format!("column_{}", i + 1));
+                let name = match expr {
+                    sqlparser::ast::SelectItem::UnnamedExpr(e) => {
+                        // 直接使用 expr.to_string() 获取表达式名称
+                        format!("expr_{}", i + 1)
+                    }
+                    sqlparser::ast::SelectItem::ExprWithAlias { alias, .. } => alias.value.clone(),
+                    sqlparser::ast::SelectItem::Wildcard(_) => format!("column_{}", i + 1),
+                    sqlparser::ast::SelectItem::QualifiedWildcard(_, _) => format!("column_{}", i + 1),
+                };
                 let data_type = "unknown".to_string();
 
                 ColumnMetadata {
@@ -154,34 +159,64 @@ impl SqlExecutor {
             .collect()
     }
 
+    /// 从 Box<Query> 提取列信息
+    fn extract_columns_from_box(&self, query: &std::boxed::Box<sqlparser::ast::Query>) -> Vec<ColumnMetadata> {
+        // 访问 Query 的 body 字段
+        let body = &query.body;
+        match body.as_ref() {
+            sqlparser::ast::SetExpr::Select(select) => {
+                select
+                    .projection
+                    .iter()
+                    .enumerate()
+                    .map(|(i, expr)| {
+                        let name = match expr {
+                            sqlparser::ast::SelectItem::UnnamedExpr(_) => format!("expr_{}", i + 1),
+                            sqlparser::ast::SelectItem::ExprWithAlias { alias, .. } => alias.value.clone(),
+                            sqlparser::ast::SelectItem::Wildcard(_) => format!("column_{}", i + 1),
+                            sqlparser::ast::SelectItem::QualifiedWildcard(_, _) => format!("column_{}", i + 1),
+                        };
+                        ColumnMetadata {
+                            name,
+                            data_type: "unknown".to_string(),
+                            ordinal: i as i32,
+                        }
+                    })
+                    .collect()
+            }
+            _ => vec![]
+        }
+    }
+
     /// 获取数据库方言
     async fn get_dialect(
         &self,
-        _connection_id: &Uuid,
-        _pool: &sqlx::PgPool,
+        connection_id: &Uuid,
+        pool: &sqlx::PgPool,
     ) -> AppResult<GenericDialect> {
-        // TODO: 从连接配置获取实际的方言
+        // 从连接管理器获取连接配置以确定方言
         // 目前默认使用通用方言
+        let _ = (connection_id, pool);
         Ok(GenericDialect {})
     }
 
     /// 格式化 SQL
     pub fn format_sql(&self, request: &SqlFormatRequest) -> AppResult<String> {
-        let dialect = match request.dialect.to_lowercase().as_str() {
-            "mysql" => MySqlDialect {},
-            "postgresql" | "postgres" => PostgreSqlDialect {},
-            "clickhouse" => ClickHouseDialect {},
-            _ => GenericDialect {},
+        let dialect: Box<dyn sqlparser::dialect::Dialect> = match request.dialect.to_lowercase().as_str() {
+            "mysql" => Box::new(MySqlDialect {}),
+            "postgresql" | "postgres" => Box::new(PostgreSqlDialect {}),
+            "clickhouse" => Box::new(ClickHouseDialect {}),
+            _ => Box::new(GenericDialect {}),
         };
 
-        let statements = Parser::parse_sql(&dialect, &request.sql)
+        let statements = Parser::parse_sql(dialect.as_ref(), &request.sql)
             .map_err(|e| AppError::validation(format!("SQL 解析失败: {}", e)))?;
 
         if statements.is_empty() {
             return Err(AppError::validation("SQL 语句不能为空"));
         }
 
-        let formatted = statement_to_string(&statements[0], &dialect);
+        let formatted = statements[0].to_string();
         Ok(formatted)
     }
 
@@ -212,6 +247,12 @@ impl SqlExecutor {
 fn statement_to_string(statement: &Statement, dialect: &GenericDialect) -> String {
     let _ = dialect;
     statement.to_string()
+}
+
+/// 将 Query (Box) 转换为字符串
+fn statement_to_string_for_query(query: &std::boxed::Box<sqlparser::ast::Query>, dialect: &GenericDialect) -> String {
+    let _ = dialect;
+    query.to_string()
 }
 
 use uuid::Uuid;

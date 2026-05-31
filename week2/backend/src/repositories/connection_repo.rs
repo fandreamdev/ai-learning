@@ -157,6 +157,40 @@ impl ConnectionRepo {
 
         Ok(())
     }
+
+    /// 清除用户的所有默认连接
+    pub async fn clear_default_for_user(&self, user_id: Option<Uuid>) -> AppResult<()> {
+        if let Some(uid) = user_id {
+            sqlx::query(
+                "UPDATE database_connections SET is_default = FALSE WHERE created_by = $1",
+            )
+            .bind(uid)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// 分页获取连接列表
+    pub async fn list_paginated(&self, page: i32, page_size: i32) -> AppResult<Vec<DatabaseConnection>> {
+        let offset = (page - 1) * page_size;
+
+        let conns = sqlx::query_as::<_, ConnectionRow>(
+            r#"
+            SELECT id, name, db_type, host, port, database_name, username, encrypted_password,
+                   is_default, created_by, created_at, updated_at
+            FROM database_connections
+            ORDER BY is_default DESC, name ASC
+            LIMIT $1 OFFSET $2
+            "#,
+        )
+        .bind(page_size)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(conns.into_iter().map(|r| r.into()).collect())
+    }
 }
 
 /// 连接行（数据库映射）

@@ -2658,6 +2658,7 @@ dependencies = [
  "futures",
  "hmac",
  "jsonwebtoken",
+ "lazy_static",
  "mockall",
  "once_cell",
  "pretty_assertions",

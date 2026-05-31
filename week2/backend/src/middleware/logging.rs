@@ -12,7 +12,7 @@ use std::{
     collections::HashMap,
     time::{Duration, Instant},
 };
-use tracing::{info, warn, Span, Level};
+use tracing::{info, warn, Span, Level, Instrument};
 
 /// 请求日志中间件
 ///
@@ -35,10 +35,7 @@ pub async fn logging_middleware(request: Request, next: Next) -> Response {
         request_id = %request_id
     );
 
-    let response = span.in_scope(|| async move {
-        let response = next.run(request).await;
-        response
-    }.in_current_span());
+    let response = next.run(request).instrument(span).await;
 
     let duration = start.elapsed();
 
@@ -197,10 +194,12 @@ pub async fn tracing_headers_middleware(
     let (mut parts, body) = response.into_parts();
 
     // 添加追踪头
-    parts.headers.insert(
-        HeaderName::from_static("x-request-id"),
-        HeaderValue::from_str(&request_id).unwrap_or_default(),
-    );
+    if let Ok(header_value) = HeaderValue::from_str(&request_id) {
+        parts.headers.insert(
+            HeaderName::from_static("x-request-id"),
+            header_value,
+        );
+    }
 
     parts.headers.insert(
         HeaderName::from_static("x-response-time"),

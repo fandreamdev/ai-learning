@@ -8,6 +8,16 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+/// NL 转 SQL 结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NlToSqlResult {
+    pub sql: String,
+    pub explanation: String,
+    pub confidence: f32,
+    pub estimated_rows: Option<i32>,
+    pub referenced_tables: Vec<String>,
+}
+
 /// LLM 客户端
 #[derive(Clone)]
 pub struct LlmClient {
@@ -19,7 +29,7 @@ impl LlmClient {
     /// 创建新的 LLM 客户端
     pub fn new(config: &AppConfig) -> AppResult<Self> {
         let http_client = Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
+            .timeout(std::time::Duration::from_secs(120)) // 增加超时时间
             .build()
             .map_err(|e| AppError::internal(format!("Failed to create HTTP client: {}", e)))?;
 
@@ -29,12 +39,38 @@ impl LlmClient {
         })
     }
 
+    /// NL 转 SQL（主要接口）
+    pub async fn convert_nl_to_sql(
+        &self,
+        question: &str,
+        schema_context: Option<&str>,
+    ) -> AppResult<NlToSqlResult> {
+        let prompt = self.build_nl_to_sql_prompt(question, schema_context);
+        let model = &self.config.openai.model;
+
+        match self.call_llm(&prompt, model).await {
+            Ok(response) => {
+                self.parse_nl_to_sql_response(&response)
+            }
+            Err(e) => {
+                // 如果 API Key 未配置，返回友好的错误消息
+                if e.to_string().contains("API key not configured") {
+                    Err(AppError::LlmUnavailable(
+                        "LLM API Key 未配置，请检查 .env 文件中的 OPENAI_API_KEY".to_string()
+                    ))
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
+
     /// 生成 SQL（自然语言转 SQL）
     pub async fn generate_sql(&self, schema: &str, question: &str) -> AppResult<SqlGenerationResponse> {
-        let prompt = self.build_nl_to_sql_prompt(schema, question);
+        let prompt = self.build_nl_to_sql_prompt(question, Some(schema));
+        let model = &self.config.openai.model;
 
-        let response = self.call_llm(&prompt, "gpt-4o").await?;
-
+        let response = self.call_llm(&prompt, model).await?;
         self.parse_sql_response(&response)
     }
 
@@ -129,7 +165,7 @@ Schema 信息：
         let content = llm_response
             .choices
             .first()
-            .and_then(|c| c.message.content.as_ref())
+            .map(|c| c.message.content.as_str())
             .ok_or_else(|| AppError::LlmParseError("No content in response".to_string()))?
             .to_string();
 
@@ -137,24 +173,32 @@ Schema 信息：
     }
 
     /// 构建 NL 转 SQL 的提示词
-    fn build_nl_to_sql_prompt(&self, schema: &str, question: &str) -> String {
+    fn build_nl_to_sql_prompt(&self, question: &str, schema_context: Option<&str>) -> String {
+        let schema_info = schema_context
+            .map(|s| {
+                format!(
+                    r#"## 数据库 Schema 信息
+{}
+
+"#,
+                    s
+                )
+            })
+            .unwrap_or_else(|| String::new());
+
         format!(
             r#"你是一个专业的 SQL 专家。请根据以下 Schema 信息，将用户问题转换为 SQL 查询。
 
-## Schema 信息
-{}
-
-## 数据库类型
-MySQL
-
-## 用户问题
-{}
-
+{schema_info}
 ## 要求
 1. 只生成 SELECT 查询，不要生成 INSERT/UPDATE/DELETE
 2. 考虑性能，必要时添加 LIMIT
 3. 如果问题不明确，进行合理假设
 4. 只返回 SQL，不要其他解释
+5. 确保 SQL 语法正确
+
+## 用户问题
+{}
 
 请按以下 JSON 格式返回：
 {{
@@ -162,8 +206,53 @@ MySQL
   "explanation": "查询逻辑的中文解释",
   "confidence": 0.0-1.0 的置信度
 }}"#,
-            schema, question
+            question
         )
+    }
+
+    /// 解析 NL 转 SQL 响应
+    fn parse_nl_to_sql_response(&self, response: &str) -> AppResult<NlToSqlResult> {
+        let json_str = self.extract_json(response)?;
+
+        let parsed: serde_json::Value = serde_json::from_str(&json_str)
+            .map_err(|e| AppError::LlmParseError(format!("Failed to parse JSON: {}", e)))?;
+
+        let sql = parsed["sql"]
+            .as_str()
+            .ok_or_else(|| AppError::LlmParseError("Missing 'sql' field".to_string()))?
+            .to_string();
+
+        let explanation = parsed["explanation"]
+            .as_str()
+            .unwrap_or("无法生成解释")
+            .to_string();
+
+        let confidence = parsed["confidence"]
+            .as_f64()
+            .unwrap_or(0.5) as f32;
+
+        // 提取引用的表
+        let referenced_tables: Vec<String> = parsed["referenced_tables"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // 估算行数
+        let estimated_rows = parsed["estimated_rows"]
+            .as_i64()
+            .map(|v| v as i32);
+
+        Ok(NlToSqlResult {
+            sql,
+            explanation,
+            confidence,
+            estimated_rows,
+            referenced_tables,
+        })
     }
 
     /// 解析 SQL 生成响应

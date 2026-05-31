@@ -4,10 +4,10 @@
 
 use crate::error::{AppError, AppResult};
 use crate::models::DatabaseType;
+use serde::{Deserialize, Serialize};
 use sqlx::{
     mysql::{MySqlPool, MySqlPoolOptions},
     postgres::{PgPool, PgPoolOptions},
-    Pool,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 /// 数据库连接类型
 #[derive(Clone)]
-pub enum DbPool {
+pub enum ConnectionPool {
     Postgres(PgPool),
     Mysql(MySqlPool),
 }
@@ -24,43 +24,94 @@ pub enum DbPool {
 /// 连接管理器
 #[derive(Clone)]
 pub struct ConnectionManager {
-    /// 连接池缓存
-    pools: Arc<RwLock<HashMap<Uuid, DbPool>>>,
+    /// PostgreSQL 连接池缓存
+    pg_pools: Arc<tokio::sync::RwLock<HashMap<Uuid, PgPool>>>,
+    /// MySQL 连接池缓存
+    mysql_pools: Arc<tokio::sync::RwLock<HashMap<Uuid, MySqlPool>>>,
     /// 目标数据库连接配置 (不包含密码)
-    configs: Arc<RwLock<HashMap<Uuid, ConnectionConfig>>>,
+    configs: Arc<tokio::sync::RwLock<HashMap<Uuid, ConnectionConfig>>>,
 }
 
 impl ConnectionManager {
     /// 创建新的连接管理器
     pub fn new() -> Self {
         Self {
-            pools: Arc::new(RwLock::new(HashMap::new())),
-            configs: Arc::new(RwLock::new(HashMap::new())),
+            pg_pools: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            mysql_pools: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            configs: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         }
     }
 
-    /// 获取或创建连接池
-    pub async fn get_pool(&self, config: &ConnectionConfig) -> AppResult<Pool<sqlx::any::Any>> {
+    /// 获取 PostgreSQL 连接池
+    pub async fn get_pg_pool(&self, config: &ConnectionConfig) -> AppResult<PgPool> {
+        // 先检查缓存
+        {
+            let pools = self.pg_pools.read().await;
+            if let Some(pool) = pools.get(&config.id) {
+                return Ok(pool.clone());
+            }
+        }
+
+        if config.db_type != DatabaseType::Postgresql {
+            return Err(AppError::validation("不是 PostgreSQL 连接".to_string()));
+        }
+        let url = config.postgres_url()?;
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .acquire_timeout(std::time::Duration::from_secs(30))
+            .connect(&url)
+            .await
+            .map_err(|e| AppError::database(format!("PostgreSQL 连接失败: {}", e)))?;
+
+        // 缓存连接池
+        {
+            let mut pools = self.pg_pools.write().await;
+            pools.insert(config.id, pool.clone());
+        }
+
+        Ok(pool)
+    }
+
+    /// 获取 MySQL 连接池
+    pub async fn get_mysql_pool(&self, config: &ConnectionConfig) -> AppResult<MySqlPool> {
+        // 先检查缓存
+        {
+            let pools = self.mysql_pools.read().await;
+            if let Some(pool) = pools.get(&config.id) {
+                return Ok(pool.clone());
+            }
+        }
+
+        if config.db_type != DatabaseType::Mysql {
+            return Err(AppError::validation("不是 MySQL 连接".to_string()));
+        }
+        let url = config.mysql_url()?;
+        let pool = MySqlPoolOptions::new()
+            .max_connections(5)
+            .acquire_timeout(std::time::Duration::from_secs(30))
+            .connect(&url)
+            .await
+            .map_err(|e| AppError::database(format!("MySQL 连接失败: {}", e)))?;
+
+        // 缓存连接池
+        {
+            let mut pools = self.mysql_pools.write().await;
+            pools.insert(config.id, pool.clone());
+        }
+
+        Ok(pool)
+    }
+
+    /// 获取指定类型的连接池
+    pub async fn get_pool(&self, config: &ConnectionConfig) -> AppResult<ConnectionPool> {
         match config.db_type {
             DatabaseType::Postgresql => {
-                let url = config.postgres_url()?;
-                let pool = PgPoolOptions::new()
-                    .max_connections(5)
-                    .acquire_timeout(std::time::Duration::from_secs(30))
-                    .connect(&url)
-                    .await
-                    .map_err(|e| AppError::database(format!("PostgreSQL 连接失败: {}", e)))?;
-                Ok(pool.into())
+                let pool = self.get_pg_pool(config).await?;
+                Ok(ConnectionPool::Postgres(pool))
             }
             DatabaseType::Mysql => {
-                let url = config.mysql_url()?;
-                let pool = MySqlPoolOptions::new()
-                    .max_connections(5)
-                    .acquire_timeout(std::time::Duration::from_secs(30))
-                    .connect(&url)
-                    .await
-                    .map_err(|e| AppError::database(format!("MySQL 连接失败: {}", e)))?;
-                Ok(pool.into())
+                let pool = self.get_mysql_pool(config).await?;
+                Ok(ConnectionPool::Mysql(pool))
             }
             _ => Err(AppError::validation(format!(
                 "不支持的数据库类型: {:?}",
@@ -69,38 +120,151 @@ impl ConnectionManager {
         }
     }
 
-    /// 测试数据库连接
-    pub async fn test_connection(&self, config: &ConnectionConfig) -> AppResult<ConnectionTestResult> {
-        let pool = self.get_pool(config).await;
+    /// 测试数据库连接 (PostgreSQL)
+    pub async fn test_connection_pg(&self, config: &ConnectionConfig) -> AppResult<String> {
+        let pool = self.get_pg_pool(config).await?;
+        let version: (String,) = sqlx::query_as("SELECT version()")
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| AppError::database(format!("查询版本失败: {}", e)))?;
+        Ok(version.0)
+    }
 
-        match pool {
-            Ok(pool) => {
-                // 执行简单查询测试连接
-                let result: Result<(i64,), _> = sqlx::query_as("SELECT 1")
-                    .fetch_one(&pool)
-                    .await;
+    /// 测试数据库连接 (MySQL)
+    pub async fn test_connection_mysql(&self, config: &ConnectionConfig) -> AppResult<String> {
+        let pool = self.get_mysql_pool(config).await?;
+        let version: (String,) = sqlx::query_as("SELECT version()")
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| AppError::database(format!("查询版本失败: {}", e)))?;
+        Ok(version.0)
+    }
 
-                match result {
-                    Ok(_) => Ok(ConnectionTestResult {
-                        success: true,
-                        message: "连接成功".to_string(),
-                        server_version: None,
-                        latency_ms: 0,
-                    }),
-                    Err(e) => Ok(ConnectionTestResult {
-                        success: false,
-                        message: format!("查询失败: {}", e),
-                        server_version: None,
-                        latency_ms: 0,
-                    }),
-                }
+    /// 获取数据库 Schema 信息
+    pub async fn get_schema(&self, config: &ConnectionConfig) -> AppResult<Vec<TableInfo>> {
+        match config.db_type {
+            DatabaseType::Postgresql => {
+                let pool = self.get_pg_pool(config).await?;
+                let tables: Vec<TableInfoRow> = sqlx::query_as(
+                    r#"
+                    SELECT
+                        t.table_name,
+                        t.table_schema,
+                        t.table_type,
+                        obj_description((t.table_schema || '.' || t.table_name)::regclass, 'pg_class') as comment
+                    FROM information_schema.tables t
+                    WHERE t.table_schema NOT IN ('pg_catalog', 'information_schema')
+                    ORDER BY t.table_name
+                    "#,
+                )
+                .fetch_all(&pool)
+                .await?;
+
+                Ok(tables.into_iter().map(|r| TableInfo {
+                    table_name: r.table_name,
+                    table_schema: r.table_schema,
+                    table_type: r.table_type,
+                    comment: r.comment,
+                    row_count: None,
+                    columns: vec![],
+                }).collect())
             }
-            Err(e) => Ok(ConnectionTestResult {
-                success: false,
-                message: format!("连接失败: {}", e),
-                server_version: None,
-                latency_ms: 0,
-            }),
+            DatabaseType::Mysql => {
+                let pool = self.get_mysql_pool(config).await?;
+                let tables: Vec<TableInfoRow> = sqlx::query_as(
+                    r#"
+                    SELECT
+                        t.TABLE_NAME as table_name,
+                        t.TABLE_SCHEMA as table_schema,
+                        t.TABLE_TYPE as table_type,
+                        t.TABLE_COMMENT as comment
+                    FROM information_schema.TABLES t
+                    WHERE t.TABLE_SCHEMA = DATABASE()
+                    AND t.TABLE_TYPE IN ('BASE TABLE', 'VIEW')
+                    ORDER BY t.TABLE_NAME
+                    "#,
+                )
+                .bind(&config.database_name)
+                .fetch_all(&pool)
+                .await?;
+
+                Ok(tables.into_iter().map(|r| TableInfo {
+                    table_name: r.table_name,
+                    table_schema: r.table_schema,
+                    table_type: r.table_type,
+                    comment: r.comment,
+                    row_count: None,
+                    columns: vec![],
+                }).collect())
+            }
+            _ => Err(AppError::validation("不支持的数据库类型".to_string())),
+        }
+    }
+
+    /// 获取表的列信息
+    pub async fn get_table_columns(&self, config: &ConnectionConfig, table_name: &str) -> AppResult<Vec<ColumnInfo>> {
+        match config.db_type {
+            DatabaseType::Postgresql => {
+                let pool = self.get_pg_pool(config).await?;
+                let columns: Vec<ColumnInfoRow> = sqlx::query_as(
+                    r#"
+                    SELECT
+                        c.column_name,
+                        c.data_type,
+                        c.is_nullable,
+                        c.column_default,
+                        c.character_maximum_length,
+                        c.numeric_precision,
+                        c.numeric_scale,
+                        col_description((c.table_schema || '.' || c.table_name)::regclass, c.ordinal_position) as comment
+                    FROM information_schema.columns c
+                    WHERE c.table_name = $1 AND c.table_schema = 'public'
+                    ORDER BY c.ordinal_position
+                    "#,
+                )
+                .bind(table_name)
+                .fetch_all(&pool)
+                .await?;
+
+                Ok(columns.into_iter().map(|r| ColumnInfo {
+                    name: r.column_name,
+                    data_type: r.data_type,
+                    nullable: r.is_nullable == "YES",
+                    default_value: r.column_default,
+                    comment: r.comment,
+                }).collect())
+            }
+            DatabaseType::Mysql => {
+                let pool = self.get_mysql_pool(config).await?;
+                let columns: Vec<ColumnInfoRow> = sqlx::query_as(
+                    r#"
+                    SELECT
+                        c.COLUMN_NAME as column_name,
+                        c.DATA_TYPE as data_type,
+                        c.IS_NULLABLE as is_nullable,
+                        c.COLUMN_DEFAULT as column_default,
+                        c.CHARACTER_MAXIMUM_LENGTH as character_maximum_length,
+                        c.NUMERIC_PRECISION as numeric_precision,
+                        c.NUMERIC_SCALE as numeric_scale,
+                        c.COLUMN_COMMENT as comment
+                    FROM information_schema.COLUMNS c
+                    WHERE c.TABLE_NAME = ? AND c.TABLE_SCHEMA = DATABASE()
+                    ORDER BY c.ORDINAL_POSITION
+                    "#,
+                )
+                .bind(table_name)
+                .fetch_all(&pool)
+                .await?;
+
+                Ok(columns.into_iter().map(|r| ColumnInfo {
+                    name: r.column_name,
+                    data_type: r.data_type,
+                    nullable: r.is_nullable == "YES",
+                    default_value: r.column_default,
+                    comment: r.comment,
+                }).collect())
+            }
+            _ => Err(AppError::validation("不支持的数据库类型".to_string())),
         }
     }
 
@@ -166,11 +330,45 @@ impl ConnectionConfig {
     }
 }
 
-/// 连接测试结果
-#[derive(Debug, serde::Serialize)]
-pub struct ConnectionTestResult {
-    pub success: bool,
-    pub message: String,
-    pub server_version: Option<String>,
-    pub latency_ms: u64,
+/// 表信息
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TableInfo {
+    pub table_name: String,
+    pub table_schema: String,
+    pub table_type: String,
+    pub comment: Option<String>,
+    pub row_count: Option<i64>,
+    pub columns: Vec<ColumnInfo>,
+}
+
+/// 列信息
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ColumnInfo {
+    pub name: String,
+    pub data_type: String,
+    pub nullable: bool,
+    pub default_value: Option<String>,
+    pub comment: Option<String>,
+}
+
+/// 表信息行（PostgreSQL）
+#[derive(Debug, sqlx::FromRow)]
+struct TableInfoRow {
+    table_name: String,
+    table_schema: String,
+    table_type: String,
+    comment: Option<String>,
+}
+
+/// 列信息行
+#[derive(Debug, sqlx::FromRow)]
+struct ColumnInfoRow {
+    column_name: String,
+    data_type: String,
+    is_nullable: String,
+    column_default: Option<String>,
+    character_maximum_length: Option<i64>,
+    numeric_precision: Option<i32>,
+    numeric_scale: Option<i32>,
+    comment: Option<String>,
 }
