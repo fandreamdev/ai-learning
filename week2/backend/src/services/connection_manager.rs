@@ -11,7 +11,6 @@ use sqlx::{
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use uuid::Uuid;
 
 /// 数据库连接类型
@@ -362,6 +361,7 @@ struct TableInfoRow {
 
 /// 列信息行
 #[derive(Debug, sqlx::FromRow)]
+#[allow(dead_code)]
 struct ColumnInfoRow {
     column_name: String,
     data_type: String,

@@ -4,7 +4,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
+use sqlx::{FromRow, TypeInfo};
 use uuid::Uuid;
 use validator::Validate;
 
@@ -107,7 +107,8 @@ impl sqlx::Type<sqlx::Postgres> for UserRole {
     }
 
     fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
-        ty.name() == "VARCHAR" || ty.name() == "TEXT"
+        let name = ty.name();
+        name == "VARCHAR" || name == "TEXT"
     }
 }
 

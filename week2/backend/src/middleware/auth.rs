@@ -3,11 +3,10 @@
 //! 提供 JWT 认证和权限检查功能
 
 use crate::error::{AppError, AppResult};
-use crate::models::{TokenClaims, UserRole, UserSession};
+use crate::models::{UserRole, UserSession};
 use crate::state::AppState;
 use axum::{
     extract::{Request, State},
-    http::StatusCode,
     middleware::Next,
     response::Response,
 };
@@ -105,7 +104,7 @@ pub async fn optional_auth_middleware(
 ///
 /// 创建一个检查用户角色的中间件
 pub fn require_role(required_role: UserRole) -> impl Fn(State<Arc<AppState>>, Request, Next) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Response, AppError>> + Send>> {
-    move |State(state): State<Arc<AppState>>, request: Request, next: Next| {
+    move |State(_state): State<Arc<AppState>>, request: Request, next: Next| {
         let required_role = required_role.clone();
         Box::pin(async move {
             let session = request
@@ -209,7 +208,7 @@ pub async fn require_chat_mode(
 }
 
 /// 从请求中获取当前用户会话
-pub fn get_session_from_request<T>(request: &Request) -> AppResult<UserSession> {
+pub fn get_session_from_request(request: &Request) -> AppResult<UserSession> {
     request
         .extensions()
         .get::<UserSession>()
@@ -218,7 +217,7 @@ pub fn get_session_from_request<T>(request: &Request) -> AppResult<UserSession> 
 }
 
 /// 从请求中获取当前用户 ID
-pub fn get_user_id_from_request<T>(request: &Request) -> AppResult<uuid::Uuid> {
+pub fn get_user_id_from_request(request: &Request) -> AppResult<uuid::Uuid> {
     get_session_from_request(request).map(|s| s.user_id)
 }
 

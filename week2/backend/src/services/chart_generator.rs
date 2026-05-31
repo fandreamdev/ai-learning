@@ -109,6 +109,7 @@ pub struct ChartRecommendation {
 /// 图表生成服务
 #[derive(Clone)]
 pub struct ChartGenerator {
+    #[allow(dead_code)]
     recommendations: HashMap<String, ChartRecommendation>,
 }
 
@@ -196,7 +197,7 @@ impl ChartGenerator {
         }
         // 少量分类 + 数值 -> 柱状图或饼图
         else if !analysis.categorical_cols.is_empty() && !analysis.numeric_cols.is_empty() {
-            let cat_col = analysis.categorical_cols[0];
+            let _cat_col = analysis.categorical_cols[0];
             let unique_count = 10; // 简化处理
 
             if unique_count <= 6 {
@@ -274,7 +275,7 @@ impl ChartGenerator {
     fn build_echarts_config(
         &self,
         chart_type: &ChartType,
-        columns: &[ColumnMetadata],
+        _columns: &[ColumnMetadata],
         rows: &[Vec<serde_json::Value>],
     ) -> AppResult<serde_json::Value> {
         let mut config = serde_json::json!({
@@ -292,7 +293,7 @@ impl ChartGenerator {
                 config["yAxis"] = serde_json::json!({
                     "type": "value"
                 });
-                config["series"] = vec![serde_json::json!({
+                config["series"] = serde_json::json!([{
                     "type": chart_type.as_str(),
                     "data": rows.iter().filter_map(|r| r.get(1).map(|v| {
                         if let Some(n) = v.as_i64() {
@@ -303,10 +304,10 @@ impl ChartGenerator {
                             serde_json::Value::Null
                         }
                     })).collect::<Vec<_>>()
-                })];
+                }]);
             }
             ChartType::Pie | ChartType::Doughnut => {
-                config["series"] = vec![serde_json::json!({
+                config["series"] = serde_json::json!([{
                     "type": chart_type.as_str(),
                     "radius": if chart_type == &ChartType::Doughnut { "55%" } else { "60%" },
                     "data": rows.iter().map(|r| {
@@ -322,7 +323,7 @@ impl ChartGenerator {
                         }).unwrap_or(0);
                         serde_json::json!({ "name": name, "value": value })
                     }).collect::<Vec<_>>()
-                })];
+                }]);
             }
             _ => {}
         }

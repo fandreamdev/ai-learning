@@ -2,8 +2,8 @@
 //!
 //! 数据库连接数据的数据库操作
 
-use crate::error::{AppError, AppResult};
-use crate::models::{ConnectionPublic, DatabaseConnection, DatabaseType};
+use crate::error::AppResult;
+use crate::models::{DatabaseConnection, DatabaseType};
 use sqlx::PgPool;
 use uuid::Uuid;
 

@@ -5,20 +5,19 @@
 use crate::config::AppConfig;
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    ColumnMetadata, DatabaseType, ExecutionPlan, QueryHistory, QueryStatus, SqlExecuteRequest,
+    ColumnMetadata, ExecutionPlan, QueryHistory, SqlExecuteRequest,
     SqlExecuteResponse, SqlFormatRequest,
 };
-use chrono::Utc;
-use sqlparser::ast::{Select, SetExpr, Statement};
+use sqlparser::ast::{Select, Statement};
 use sqlparser::dialect::{ClickHouseDialect, GenericDialect, MySqlDialect, PostgreSqlDialect};
 use sqlparser::parser::Parser;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
 /// SQL 执行器
 #[derive(Clone)]
 pub struct SqlExecutor {
+    #[allow(dead_code)]
     config: Arc<AppConfig>,
 }
 
@@ -91,7 +90,7 @@ impl SqlExecutor {
         pool: &sqlx::PgPool,
         query: &std::boxed::Box<sqlparser::ast::Query>,
         dialect: &GenericDialect,
-        timeout: Option<u64>,
+        _timeout: Option<u64>,
     ) -> AppResult<SqlExecuteResponse> {
         // 生成列信息
         let columns = self.extract_columns_from_box(query);
@@ -133,6 +132,8 @@ impl SqlExecutor {
     }
 
     /// 提取列信息
+    /// 从 SELECT 语句提取列信息
+    #[allow(dead_code)]
     fn extract_columns(&self, query: &Select) -> Vec<ColumnMetadata> {
         query
             .projection
@@ -140,7 +141,7 @@ impl SqlExecutor {
             .enumerate()
             .map(|(i, expr)| {
                 let name = match expr {
-                    sqlparser::ast::SelectItem::UnnamedExpr(e) => {
+                    sqlparser::ast::SelectItem::UnnamedExpr(_e) => {
                         // 直接使用 expr.to_string() 获取表达式名称
                         format!("expr_{}", i + 1)
                     }
@@ -244,6 +245,8 @@ impl SqlExecutor {
 }
 
 /// 将语句转换为字符串
+/// 将 Statement 转换为字符串
+#[allow(dead_code)]
 fn statement_to_string(statement: &Statement, dialect: &GenericDialect) -> String {
     let _ = dialect;
     statement.to_string()

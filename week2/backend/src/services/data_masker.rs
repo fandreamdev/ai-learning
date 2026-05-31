@@ -218,7 +218,7 @@ impl DataMasker {
         } else {
             let mut result = value[..1].to_string();
             result.push_str(&"*".repeat(chars.len() - 2));
-            result.push(chars.last().unwrap());
+            result.push(*chars.last().unwrap());
             result
         }
     }

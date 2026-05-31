@@ -37,7 +37,7 @@ impl TokenBlacklist {
     }
 
     /// 检查 token 是否已过期 (简化实现，实际应该解析 JWT 获取 exp)
-    fn is_expired(token: &str) -> bool {
+    fn is_expired(_token: &str) -> bool {
         // 这里简化处理，实际应该解析 JWT 获取过期时间
         // 如果使用 Redis，可以在这里检查 Redis 中的 TTL
         false

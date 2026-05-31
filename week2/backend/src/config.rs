@@ -110,12 +110,39 @@ pub struct CorsConfig {
     pub max_age: u64,
 }
 
+impl Default for CorsConfig {
+    fn default() -> Self {
+        Self {
+            allowed_origins: vec!["*".to_string()],
+            allowed_methods: vec!["GET".to_string(), "POST".to_string(), "PUT".to_string(), "DELETE".to_string()],
+            allowed_headers: vec!["Content-Type".to_string(), "Authorization".to_string()],
+            max_age: 3600,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct SqlSecurityConfig {
     pub max_query_length: usize,
     pub query_timeout: u64,
     pub allow_dangerous_functions: bool,
     pub blocked_functions: Vec<String>,
+}
+
+impl Default for SqlSecurityConfig {
+    fn default() -> Self {
+        Self {
+            max_query_length: 65536,
+            query_timeout: 30000,
+            allow_dangerous_functions: false,
+            blocked_functions: vec![
+                "LOAD_FILE".to_string(),
+                "INTO OUTFILE".to_string(),
+                "BENCHMARK".to_string(),
+                "SLEEP".to_string(),
+            ],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

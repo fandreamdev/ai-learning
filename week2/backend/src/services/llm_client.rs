@@ -339,6 +339,7 @@ struct LlmMessage {
 
 /// LLM 响应
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct LlmResponse {
     id: String,
     choices: Vec<LlmChoice>,
@@ -353,6 +354,7 @@ struct LlmChoice {
 
 /// LLM 响应消息
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct LlmResponseMessage {
     role: String,
     content: String,
@@ -360,6 +362,7 @@ struct LlmResponseMessage {
 
 /// LLM 使用量
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct LlmUsage {
     prompt_tokens: u32,
     completion_tokens: u32,

@@ -166,7 +166,7 @@ impl AuthService {
 /// 用户仓储
 pub mod repositories {
     use crate::error::AppResult;
-    use crate::models::{User, UserRole};
+    use crate::models::User;
     use sqlx::PgPool;
     use uuid::Uuid;
 
@@ -266,7 +266,6 @@ pub mod repositories {
     }
 }
 
-use uuid::Uuid;
 
 #[cfg(test)]
 mod tests {

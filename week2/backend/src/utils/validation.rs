@@ -4,9 +4,6 @@
 
 use crate::error::{AppError, AppResult};
 use regex::Regex;
-use std::net::IpAddr;
-use std::str::FromStr;
-use validator::Validate;
 
 /// 验证用户名
 ///

@@ -2,7 +2,7 @@
 //!
 //! 用户数据的数据库操作
 
-use crate::error::{AppError, AppResult};
+use crate::error::AppResult;
 use crate::models::{User, UserRole};
 use sqlx::PgPool;
 use uuid::Uuid;

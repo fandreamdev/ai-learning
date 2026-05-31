@@ -5,7 +5,6 @@
 
 use crate::error::{AppError, AppResult};
 use crate::models::semantic::{SchemaColumn, SchemaRetrievalItem, SchemaRetrievalResponse};
-use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,6 +13,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct SchemaRetrievalService {
     pool: Option<PgPool>,
+    #[allow(dead_code)]
     cache: Arc<std::sync::RwLock<HashMap<String, SchemaCache>>>,
 }
 
@@ -436,7 +436,7 @@ impl SchemaRetrievalService {
     pub async fn fetch_schema_from_db(
         &self,
         pool: &PgPool,
-        connection_id: &str,
+        _connection_id: &str,
     ) -> AppResult<Vec<SchemaRetrievalItem>> {
         let rows: Vec<TableSchemaRow> = sqlx::query_as(
             r#"
@@ -515,6 +515,7 @@ impl Default for SchemaRetrievalService {
 
 /// Schema 缓存
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct SchemaCache {
     connection_id: String,
     tables: Vec<TableSchema>,
@@ -523,6 +524,7 @@ struct SchemaCache {
 
 /// 表 Schema
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct TableSchema {
     table_name: String,
     business_name: Option<String>,
@@ -531,6 +533,7 @@ struct TableSchema {
 
 /// 列 Schema
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct ColumnSchema {
     column_name: String,
     data_type: String,
@@ -540,6 +543,7 @@ struct ColumnSchema {
 
 /// Schema 嵌入行
 #[derive(Debug, Clone, sqlx::FromRow)]
+#[allow(dead_code)]
 struct SchemaEmbeddingRow {
     id: i32,
     table_name: String,

@@ -5,11 +5,9 @@
 use crate::error::AppError;
 use axum::{
     extract::Request,
-    http::HeaderValue,
     response::{IntoResponse, Response},
     middleware::Next,
 };
-use tracing::warn;
 
 /// 统一错误处理中间件
 ///

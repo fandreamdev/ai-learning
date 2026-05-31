@@ -12,7 +12,7 @@ use std::{
     collections::HashMap,
     time::{Duration, Instant},
 };
-use tracing::{info, warn, Span, Level, Instrument};
+use tracing::{info, warn, Instrument};
 
 /// 请求日志中间件
 ///
@@ -180,7 +180,7 @@ pub async fn cors_preflight_logger(request: Request, next: Next) -> Response {
 
 /// 添加追踪头
 pub async fn tracing_headers_middleware(
-    mut request: Request,
+    request: Request,
     next: Next,
 ) -> Response {
     let request_id = request

@@ -155,7 +155,7 @@ pub struct CreateMetricRequest {
     pub name: String,
 
     #[validate(length(min = 1, max = 50, message = "指标编码不能为空"))]
-    #[validate(regex(path = "*metric_code_regex", message = "指标编码只能包含字母、数字和下划线"))]
+    #[validate(regex(path = "metric_code_regex()", message = "指标编码只能包含字母、数字和下划线"))]
     pub code: String,
 
     #[validate(length(max = 500, message = "描述长度不能超过 500"))]

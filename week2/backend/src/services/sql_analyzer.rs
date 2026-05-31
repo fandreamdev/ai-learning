@@ -93,12 +93,12 @@ impl SqlAnalyzer {
         match statement {
             Statement::Query(_) => SqlType::Select,
             Statement::Insert(_) => SqlType::Insert,
-            Statement::Update(_) => SqlType::Update,
+            Statement::Update { .. } => SqlType::Update,
             Statement::Delete(_) => SqlType::Delete,
             Statement::CreateTable(_)
-            | Statement::Drop(_)
-            | Statement::AlterTable(_)
-            | Statement::Truncate(_) => SqlType::Ddl,
+            | Statement::Drop { .. }
+            | Statement::AlterTable { .. }
+            | Statement::Truncate { .. } => SqlType::Ddl,
             _ => SqlType::Other,
         }
     }
@@ -112,7 +112,7 @@ impl SqlAnalyzer {
                     return Some("禁止执行 INSERT 操作".to_string());
                 }
             }
-            Statement::Update(_) => {
+            Statement::Update { .. } => {
                 if !self.config.sql.allow_dangerous_functions {
                     return Some("禁止执行 UPDATE 操作".to_string());
                 }
@@ -122,17 +122,17 @@ impl SqlAnalyzer {
                     return Some("禁止执行 DELETE 操作".to_string());
                 }
             }
-            Statement::Drop(_) => {
+            Statement::Drop { .. } => {
                 return Some("禁止执行 DROP 操作".to_string());
             }
-            Statement::Truncate(_) => {
+            Statement::Truncate { .. } => {
                 return Some("禁止执行 TRUNCATE 操作".to_string());
             }
-            Statement::AlterTable(alter) => {
-                return Some(format!("禁止执行 ALTER TABLE 操作"));
+            Statement::AlterTable { .. } => {
+                return Some("禁止执行 ALTER TABLE 操作".to_string());
             }
             Statement::CreateTable(create) => {
-                if create.or_replace.is_some() {
+                if create.or_replace {
                     return Some("禁止使用 OR REPLACE".to_string());
                 }
             }
@@ -180,8 +180,6 @@ impl SqlAnalyzer {
 
     /// 提取引用的表和列
     fn extract_references(&self, statement: &Statement) -> (Vec<String>, Vec<String>) {
-        use sqlparser::ast::{SetExpr, Statement};
-
         let mut tables = Vec::new();
         let mut columns = Vec::new();
 
@@ -231,12 +229,12 @@ impl SqlAnalyzer {
         let sql_type = match statement {
             Statement::Query(_) => SqlType::Select,
             Statement::Insert(_) => SqlType::Insert,
-            Statement::Update(_) => SqlType::Update,
+            Statement::Update { .. } => SqlType::Update,
             Statement::Delete(_) => SqlType::Delete,
             Statement::CreateTable(_)
-            | Statement::Drop(_)
-            | Statement::AlterTable(_)
-            | Statement::Truncate(_) => SqlType::Ddl,
+            | Statement::Drop { .. }
+            | Statement::AlterTable { .. }
+            | Statement::Truncate { .. } => SqlType::Ddl,
             _ => SqlType::Other,
         };
 
