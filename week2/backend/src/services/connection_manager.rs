@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{
     mysql::{MySqlPool, MySqlPoolOptions},
     postgres::{PgPool, PgPoolOptions},
+    sqlite::{SqlitePool, SqlitePoolOptions},
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -18,6 +19,7 @@ use uuid::Uuid;
 pub enum ConnectionPool {
     Postgres(PgPool),
     Mysql(MySqlPool),
+    Sqlite(SqlitePool),
 }
 
 /// 连接管理器
@@ -27,6 +29,7 @@ pub struct ConnectionManager {
     pg_pools: Arc<tokio::sync::RwLock<HashMap<Uuid, PgPool>>>,
     /// MySQL 连接池缓存
     mysql_pools: Arc<tokio::sync::RwLock<HashMap<Uuid, MySqlPool>>>,
+    sqlite_pools: Arc<tokio::sync::RwLock<HashMap<Uuid, SqlitePool>>>,
     /// 目标数据库连接配置 (不包含密码)
     configs: Arc<tokio::sync::RwLock<HashMap<Uuid, ConnectionConfig>>>,
 }
@@ -37,6 +40,7 @@ impl ConnectionManager {
         Self {
             pg_pools: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             mysql_pools: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            sqlite_pools: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             configs: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         }
     }
@@ -112,11 +116,42 @@ impl ConnectionManager {
                 let pool = self.get_mysql_pool(config).await?;
                 Ok(ConnectionPool::Mysql(pool))
             }
+            DatabaseType::Sqlite => {
+                let pool = self.get_sqlite_pool(config).await?;
+                Ok(ConnectionPool::Sqlite(pool))
+            }
             _ => Err(AppError::validation(format!(
                 "不支持的数据库类型: {:?}",
                 config.db_type
             ))),
         }
+    }
+
+    pub async fn get_sqlite_pool(&self, config: &ConnectionConfig) -> AppResult<SqlitePool> {
+        {
+            let pools = self.sqlite_pools.read().await;
+            if let Some(pool) = pools.get(&config.id) {
+                return Ok(pool.clone());
+            }
+        }
+
+        if config.db_type != DatabaseType::Sqlite {
+            return Err(AppError::validation("不是 SQLite 连接".to_string()));
+        }
+        let url = config.sqlite_url()?;
+        let pool = SqlitePoolOptions::new()
+            .max_connections(5)
+            .acquire_timeout(std::time::Duration::from_secs(30))
+            .connect(&url)
+            .await
+            .map_err(|e| AppError::database(format!("SQLite 连接失败: {}", e)))?;
+
+        {
+            let mut pools = self.sqlite_pools.write().await;
+            pools.insert(config.id, pool.clone());
+        }
+
+        Ok(pool)
     }
 
     /// 测试数据库连接 (PostgreSQL)
@@ -196,6 +231,32 @@ impl ConnectionManager {
                     columns: vec![],
                 }).collect())
             }
+            DatabaseType::Sqlite => {
+                let pool = self.get_sqlite_pool(config).await?;
+                let tables: Vec<TableInfoRow> = sqlx::query_as(
+                    r#"
+                    SELECT
+                        name as table_name,
+                        'main' as table_schema,
+                        type as table_type,
+                        NULL as comment
+                    FROM sqlite_master
+                    WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'
+                    ORDER BY name
+                    "#,
+                )
+                .fetch_all(&pool)
+                .await?;
+
+                Ok(tables.into_iter().map(|r| TableInfo {
+                    table_name: r.table_name,
+                    table_schema: r.table_schema,
+                    table_type: r.table_type,
+                    comment: r.comment,
+                    row_count: None,
+                    columns: vec![],
+                }).collect())
+            }
             _ => Err(AppError::validation("不支持的数据库类型".to_string())),
         }
     }
@@ -263,6 +324,22 @@ impl ConnectionManager {
                     comment: r.comment,
                 }).collect())
             }
+            DatabaseType::Sqlite => {
+                let pool = self.get_sqlite_pool(config).await?;
+                let quoted_table = table_name.replace('\'', "''");
+                let query = format!("PRAGMA table_info('{}')", quoted_table);
+                let columns: Vec<SqliteColumnInfoRow> = sqlx::query_as(&query)
+                    .fetch_all(&pool)
+                    .await?;
+
+                Ok(columns.into_iter().map(|r| ColumnInfo {
+                    name: r.name,
+                    data_type: r.data_type,
+                    nullable: r.notnull == 0,
+                    default_value: r.dflt_value,
+                    comment: None,
+                }).collect())
+            }
             _ => Err(AppError::validation("不支持的数据库类型".to_string())),
         }
     }
@@ -327,6 +404,13 @@ impl ConnectionConfig {
             self.username, self.password, self.host, self.port, self.database_name
         ))
     }
+
+    pub fn sqlite_url(&self) -> AppResult<String> {
+        if self.db_type != DatabaseType::Sqlite {
+            return Err(AppError::validation("不是 SQLite 连接".to_string()));
+        }
+        Ok(format!("sqlite://{}", self.database_name))
+    }
 }
 
 /// 表信息
@@ -371,4 +455,17 @@ struct ColumnInfoRow {
     numeric_precision: Option<i32>,
     numeric_scale: Option<i32>,
     comment: Option<String>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct SqliteColumnInfoRow {
+    #[allow(dead_code)]
+    cid: i64,
+    name: String,
+    #[sqlx(rename = "type")]
+    data_type: String,
+    notnull: i64,
+    dflt_value: Option<String>,
+    #[allow(dead_code)]
+    pk: i64,
 }

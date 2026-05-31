@@ -11,13 +11,13 @@ license = "MIT"
 # ==================== Web框架 ====================
 axum = "0.8"
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip", "fs"] }
 
 # ==================== 异步运行时 ====================
 tokio = { version = "1.42", features = ["full"] }
 
 # ==================== 数据库 ====================
-sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "mysql", "any", "uuid", "chrono", "json"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "mysql", "sqlite", "any", "uuid", "chrono", "json"] }
 
 # ==================== Redis ====================
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }

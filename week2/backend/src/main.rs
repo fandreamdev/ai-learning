@@ -51,9 +51,10 @@ async fn main() -> anyhow::Result<()> {
 fn build_app(state: AppState, config: &AppConfig) -> axum::Router {
     use smartquery_backend::api::routes;
 
+    let shared_state = Arc::new(state);
     let app = axum::Router::new()
-        .nest("/api/v1", routes())
-        .with_state(Arc::new(state))
+        .nest("/api/v1", routes(Arc::clone(&shared_state)))
+        .with_state(shared_state)
         .layer(CompressionLayer::new());
 
     // 添加 CORS 中间件

@@ -151,7 +151,6 @@ fn role_level(role: &UserRole) -> u8 {
 
 /// 管理员检查中间件
 pub async fn admin_only(
-    State(_state): State<Arc<AppState>>,
     request: Request,
     next: Next,
 ) -> Result<Response, AppError> {
@@ -169,7 +168,6 @@ pub async fn admin_only(
 
 /// SQL 模式检查中间件
 pub async fn require_sql_mode(
-    State(_state): State<Arc<AppState>>,
     request: Request,
     next: Next,
 ) -> Result<Response, AppError> {
@@ -189,7 +187,6 @@ pub async fn require_sql_mode(
 
 /// 对话模式检查中间件
 pub async fn require_chat_mode(
-    State(_state): State<Arc<AppState>>,
     request: Request,
     next: Next,
 ) -> Result<Response, AppError> {
@@ -201,6 +198,44 @@ pub async fn require_chat_mode(
     if !session.role.can_use_chat_mode() {
         return Err(AppError::Forbidden(
             "Chat mode access denied for your role".to_string(),
+        ));
+    }
+
+    Ok(next.run(request).await)
+}
+
+/// 连接管理权限检查中间件
+pub async fn require_connection_management(
+    request: Request,
+    next: Next,
+) -> Result<Response, AppError> {
+    let session = request
+        .extensions()
+        .get::<UserSession>()
+        .ok_or_else(|| AppError::Unauthorized("Authentication required".to_string()))?;
+
+    if !session.role.can_manage_connections() {
+        return Err(AppError::Forbidden(
+            "Connection management access denied for your role".to_string(),
+        ));
+    }
+
+    Ok(next.run(request).await)
+}
+
+/// 图表生成和导出权限检查中间件
+pub async fn require_chart_generation(
+    request: Request,
+    next: Next,
+) -> Result<Response, AppError> {
+    let session = request
+        .extensions()
+        .get::<UserSession>()
+        .ok_or_else(|| AppError::Unauthorized("Authentication required".to_string()))?;
+
+    if !session.role.can_generate_charts() {
+        return Err(AppError::Forbidden(
+            "Chart generation access denied for your role".to_string(),
         ));
     }
 
